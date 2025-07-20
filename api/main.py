@@ -12,9 +12,8 @@ from fastapi import FastAPI, HTTPException, Depends, Query, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import text, select, func
+from sqlalchemy import create_engine, text, select, func
+from sqlalchemy.orm import sessionmaker, Session
 from geoalchemy2 import Geometry
 from geoalchemy2.functions import ST_DWithin, ST_Point, ST_Distance
 
@@ -29,10 +28,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Database configuration
-DATABASE_URL = "postgresql+asyncpg://geoair_user:geoair_pass@localhost:5432/geoairquality"
+DATABASE_URL = "postgresql://geoair_user:geoair_pass@postgres:5432/geoairquality"
 
-# Create async engine
-engine = create_async_engine(
+# Create sync engine
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+engine = create_engine(
     DATABASE_URL,
     echo=False,
     pool_size=20,
@@ -42,10 +44,10 @@ engine = create_async_engine(
 )
 
 # Create session factory
-AsyncSessionLocal = async_sessionmaker(
-    engine, 
-    class_=AsyncSession, 
-    expire_on_commit=False
+SessionLocal = sessionmaker(
+    bind=engine, 
+    autocommit=False,
+    autoflush=False
 )
 
 
@@ -56,9 +58,11 @@ async def lifespan(app: FastAPI):
     logger.info("Starting GeoAirQuality API")
     
     # Initialize database
-    async with engine.begin() as conn:
-        # Create tables if they don't exist
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error(f"Failed to create database tables: {e}")
     
     # Initialize cache
     try:
@@ -80,7 +84,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error closing cache: {e}")
     
     # Close database connections
-    await engine.dispose()
+    engine.dispose()
 
 
 # Create FastAPI app
@@ -102,12 +106,12 @@ app.add_middleware(
 
 
 # Dependency to get database session
-async def get_db() -> AsyncSession:
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 # Pydantic models
@@ -167,15 +171,15 @@ class HealthResponse(BaseModel):
 
 # Health check endpoints
 @app.get("/health", response_model=HealthResponse)
-async def health_check(db: AsyncSession = Depends(get_db)):
+async def health_check(db: Session = Depends(get_db)):
     """Comprehensive health check."""
     try:
         # Test database connection
-        result = await db.execute(text("SELECT 1"))
+        result = db.execute(text("SELECT 1"))
         db_healthy = result.scalar() == 1
         
         # Test PostGIS extension
-        postgis_result = await db.execute(text("SELECT PostGIS_Version()"))
+        postgis_result = db.execute(text("SELECT PostGIS_Version()"))
         postgis_version = postgis_result.scalar()
         
         # Get cache health
@@ -211,7 +215,7 @@ async def get_air_quality_readings(
     radius_km: float = Query(10, ge=0.1, le=100, description="Search radius in kilometers"),
     hours: int = Query(24, ge=1, le=168, description="Hours of data to retrieve"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """Get air quality readings within radius of a location."""
     try:
@@ -233,14 +237,14 @@ async def get_air_quality_readings(
             AirQualityReading.timestamp.desc()
         ).limit(limit)
         
-        result = await db.execute(query)
+        result = db.execute(query)
         readings = result.scalars().all()
         
         # Convert to response format
         response_data = []
         for reading in readings:
             # Extract coordinates from geometry
-            coords_result = await db.execute(
+            coords_result = db.execute(
                 text("SELECT ST_X(:geom) as lon, ST_Y(:geom) as lat").bindparam(
                     geom=reading.location
                 )
@@ -273,7 +277,7 @@ async def get_air_quality_readings(
 async def get_grid_air_quality(
     grid_id: str = Path(..., description="Grid cell identifier"),
     hours: int = Query(24, ge=1, le=168, description="Hours of data to retrieve"),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """Get air quality readings for a specific grid cell."""
     try:
@@ -284,12 +288,12 @@ async def get_grid_air_quality(
             AirQualityReading.timestamp >= time_threshold
         ).order_by(AirQualityReading.timestamp.desc())
         
-        result = await db.execute(query)
+        result = db.execute(query)
         readings = result.scalars().all()
         
         response_data = []
         for reading in readings:
-            coords_result = await db.execute(
+            coords_result = db.execute(
                 text("SELECT ST_X(:geom) as lon, ST_Y(:geom) as lat").bindparam(
                     geom=reading.location
                 )
@@ -326,7 +330,7 @@ async def get_weather_readings(
     radius_km: float = Query(10, ge=0.1, le=100, description="Search radius in kilometers"),
     hours: int = Query(24, ge=1, le=168, description="Hours of data to retrieve"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """Get weather readings within radius of a location."""
     try:
@@ -344,12 +348,12 @@ async def get_weather_readings(
             WeatherReading.timestamp.desc()
         ).limit(limit)
         
-        result = await db.execute(query)
+        result = db.execute(query)
         readings = result.scalars().all()
         
         response_data = []
         for reading in readings:
-            coords_result = await db.execute(
+            coords_result = db.execute(
                 text("SELECT ST_X(:geom) as lon, ST_Y(:geom) as lat").bindparam(
                     geom=reading.location
                 )
@@ -383,7 +387,7 @@ async def get_aggregated_data(
     grid_id: str = Path(..., description="Grid cell identifier"),
     level: str = Query("hourly", regex="^(hourly|daily|weekly)$", description="Aggregation level"),
     days: int = Query(7, ge=1, le=30, description="Days of data to retrieve"),
-    db: AsyncSession = Depends(get_db)
+    db: Session = Depends(get_db)
 ):
     """Get aggregated data for a grid cell."""
     try:
@@ -395,7 +399,7 @@ async def get_aggregated_data(
             AggregatedData.time_bucket >= time_threshold
         ).order_by(AggregatedData.time_bucket.desc())
         
-        result = await db.execute(query)
+        result = db.execute(query)
         aggregated = result.scalars().all()
         
         return [

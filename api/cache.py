@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 import redis.asyncio as redis
 from redis.exceptions import RedisError, ConnectionError
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
@@ -53,15 +53,25 @@ class RedisCache:
     async def initialize(self) -> None:
         """Initialize Redis connection pool."""
         try:
+            # Build connection parameters conditionally
+            connection_params = {
+                'password': self.settings.redis_password,
+                'max_connections': self.settings.max_connections,
+                'socket_timeout': self.settings.socket_timeout,
+                'socket_connect_timeout': self.settings.socket_connect_timeout,
+                'decode_responses': True
+            }
+            
+            # Only add SSL parameters if SSL is enabled
+            if self.settings.redis_ssl:
+                connection_params.update({
+                    'ssl': True,
+                    'ssl_cert_reqs': self.settings.redis_ssl_cert_reqs
+                })
+            
             self._connection_pool = redis.ConnectionPool.from_url(
                 self.settings.redis_url,
-                password=self.settings.redis_password,
-                ssl=self.settings.redis_ssl,
-                ssl_cert_reqs=self.settings.redis_ssl_cert_reqs,
-                max_connections=self.settings.max_connections,
-                socket_timeout=self.settings.socket_timeout,
-                socket_connect_timeout=self.settings.socket_connect_timeout,
-                decode_responses=True
+                **connection_params
             )
             
             self.redis_client = redis.Redis(connection_pool=self._connection_pool)

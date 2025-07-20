@@ -1,7 +1,5 @@
 # Docker Compose Configuration for Local Development
 
-version: '3.8'
-
 services:
   # PostgreSQL with PostGIS
   postgres:
@@ -30,7 +28,7 @@ services:
     image: redis:7-alpine
     container_name: geoairquality-redis
     ports:
-      - "6379:6379"
+      - "6380:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
@@ -104,7 +102,7 @@ services:
     image: nginx:alpine
     container_name: geoairquality-nginx
     ports:
-      - "80:80"
+      - "8080:80"
       - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf

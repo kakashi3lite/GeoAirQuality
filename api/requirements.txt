@@ -5,6 +5,7 @@ uvicorn[standard]==0.24.0
 # Database
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
+asyncpg==0.29.0
 alembic==1.12.1
 
 # Spatial libraries
@@ -12,6 +13,7 @@ geopandas==0.14.1
 shapely==2.0.2
 fiona==1.9.5
 pyproj==3.6.1
+geoalchemy2==0.14.2
 
 # Data processing
 pandas==2.1.3
