@@ -31,6 +31,7 @@ docs/
 | [API service](../api/README.md) | FastAPI endpoints, run instructions, env vars |
 | [Data pipeline](../data-pipeline/README.md) | Ingestion & processing |
 | [Deploy assets](../deploy/README.md) | k8s, Helm, nginx, monitoring |
+| [Cloudflare Pages](../frontend/README.md) | "Breathe" SPA deployment (wrangler config, `/api` edge proxy, security headers) |
 | [Tests](../tests/README.md) | What each test file covers |
 | [Root README](../README.md) | Project map + module status table |
 

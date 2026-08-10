@@ -491,3 +491,79 @@ kubectl exec -it postgresql-primary-0 -- \
 # Configuration backup
 kubectl get configmap geoairquality-config -o yaml > config-backup.yaml
 ```
+
+---
+
+# Cloudflare Deployment (Frontend SPA)
+
+The "Breathe" dashboard is a React SPA and deploys to **Cloudflare Pages**
+(static hosting + edge Functions). The FastAPI backend keeps its PostGIS/Redis
+runtime (Kubernetes or any Docker host); Pages proxies `/api/*` to it, so the
+browser talks to a single origin — no CORS, and the backend host stays hidden.
+
+## Topology
+
+```
+ Browser ──▶ Cloudflare Pages (Breathe SPA, static)
+                 │  functions/api/[[path]].js  ──▶  API origin (FastAPI)
+                 │        API_ORIGIN env var         ├─ PostGIS
+                 │                                   └─ Redis
+                 └─ _headers (security) / _redirects (SPA fallback)
+```
+
+## What ships in the repo
+
+| Path | Purpose |
+|------|---------|
+| `frontend/wrangler.jsonc` | Pages project config (name, build output, `API_ORIGIN` var) |
+| `frontend/functions/api/[[path]].js` | Edge proxy: forwards `/api/*` to the backend, 502 on outage |
+| `frontend/public/_headers` | Security headers incl. a strict CSP (allows OSM tiles + geolocation) |
+| `frontend/public/_redirects` | SPA fallback (`/* → /index.html`), API routes excluded |
+| `frontend/package.json` | `wrangler` pinned as devDependency (reproducible deploys) |
+
+## One-time setup (dashboard)
+
+1. Create the Pages project: **Workers & Pages → Create → Pages → Connect to Git**
+   (or use `wrangler pages project create`).
+2. Set the environment variable `API_ORIGIN` on the Pages project to the public
+   backend URL (e.g. `https://api.geoairquality.com`).
+3. (Optional) Attach a custom domain, e.g. `app.geoairquality.com`.
+
+## Deploy (local)
+
+```bash
+cd frontend
+npm ci
+npm run build
+npx wrangler pages deploy dist \
+  --project-name=geoairquality-breathe \
+  --branch=production        # or `preview`
+```
+
+Requires `CLOUDFLARE_API_TOKEN` (Pages:Edit + Account:Read) and
+`CLOUDFLARE_ACCOUNT_ID` (via `wrangler login` or env vars).
+
+## Deploy (CI)
+
+- **GitLab** (`.gitlab-ci.yml`): `deploy:pages:staging` auto-deploys on `main`
+  to the Pages `preview` environment; `deploy:pages:production` is a manual,
+  gated job after the API deploy. Set `CLOUDFLARE_API_TOKEN` /
+  `CLOUDFLARE_ACCOUNT_ID` as CI/CD variables.
+- **GitHub** (`.github/workflows/ci.yml`): `deploy-pages` job runs on `main`
+  (production) and `milestone/*` tags (preview). Set the same secrets.
+
+## API origin on Cloudflare
+
+The FastAPI backend (PostGIS + Redis) is not a native Workers/Pages workload.
+Run it wherever it already runs (the Kubernetes manifests in this repo, or a
+Docker host), expose it on a public URL, and point `API_ORIGIN` at it. The edge
+proxy adds a 502 fallback so the SPA shows a friendly "data unavailable" state
+instead of a raw network error when the backend is down.
+
+## Local validation
+
+`wrangler pages dev dist` serves the SPA + proxy locally (needs the API running
+and `API_ORIGIN` set). The proxy function is also unit-testable in plain Node
+(the repo's CI validates the build; the proxy logic is exercised by
+`frontend/functions/api/[[path]].js` — see its header comment).
+```

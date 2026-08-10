@@ -1,0 +1,5 @@
+# SPA fallback — serve index.html for client-side routes (/, /map, /log, /insights).
+# API routes are handled by the Pages Function at functions/api/[[path]].js
+# BEFORE this file is consulted, so /api/* never falls through here.
+/*
+  /index.html  200

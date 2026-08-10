@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "geoairquality-breathe",
+  "main": "",
+  // Pinned to the newest date the pinned wrangler's local workerd supports,
+  // so `wrangler pages dev` works locally AND in production (Cloudflare
+  // supports all past compatibility dates).
+  "compatibility_date": "2026-06-10",
+  "pages_build_output_dir": "./dist",
+  "vars": {
+    "API_ORIGIN": "https://api.geoairquality.com"
+  }
+}

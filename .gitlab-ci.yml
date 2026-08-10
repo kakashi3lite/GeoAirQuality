@@ -18,6 +18,12 @@
 #   STAGING_NAMESPACE        default: geoairquality-staging
 #   PRODUCTION_NAMESPACE     default: geoairquality-prod
 #   TRIVY_FAIL_ON_HIGH       "false" to report-only (recommended first week)
+#
+# Cloudflare Pages (frontend — "Breathe" SPA):
+#   CLOUDFLARE_API_TOKEN      API token with Pages:Edit (and Account:Read)
+#   CLOUDFLARE_ACCOUNT_ID     Cloudflare account ID
+#   CLOUDFLARE_PAGES_PROJECT  Pages project name (default: geoairquality-breathe)
+#   CLOUDFLARE_PAGES_ENV      "production" (default) or "preview"
 # ---------------------------------------------------------------------------
 
 stages:
@@ -59,6 +65,9 @@ variables:
   DATABASE_URL: "postgresql://geoair_user:geoair_pass@postgres:5432/geoairquality"
   REDIS_URL: "redis://redis:6379/0"
   RUN_INTEGRATION: "1"
+  # Cloudflare Pages deploy
+  CLOUDFLARE_PAGES_PROJECT: "geoairquality-breathe"
+  CLOUDFLARE_PAGES_ENV: "production"
 
 # ---------------------------------------------------------------------------
 # Pipeline scope: MRs, main, tags, schedules
@@ -319,3 +328,56 @@ deploy:production:
       allow_failure: false
   needs:
     - deploy:staging
+
+# ===========================================================================
+# CLOUDFLARE PAGES — "Breathe" frontend SPA
+# ===========================================================================
+# The SPA (frontend/) deploys to Cloudflare Pages: static assets + the
+# functions/api/[[path]].js proxy that forwards /api/* to the API origin
+# (env var API_ORIGIN, set in the Pages project). Security headers come
+# from frontend/public/_headers; SPA fallback from frontend/public/_redirects.
+#
+# Staging: every push to main -> Pages preview branch deploy (project-level
+# URL). Production: manual, after the API deploy, same project "production"
+# environment (custom domain, e.g. app.geoairquality.com).
+.pages_template: &pages_job
+  stage: deploy
+  image: node:20-alpine
+  before_script: []
+  variables:
+    NODE_ENV: production
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+    - npx wrangler pages deploy dist \
+        --project-name="$CLOUDFLARE_PAGES_PROJECT" \
+        --branch="$CLOUDFLARE_PAGES_ENV"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_TAG =~ /^milestone\//'
+  needs:
+    - test:unit
+
+# Staging/preview deploy — automatic on main (project pages.dev URL).
+deploy:pages:staging:
+  <<: *pages_job
+  variables:
+    CLOUDFLARE_PAGES_ENV: "preview"
+  environment:
+    name: pages-staging
+    url: https://$CLOUDFLARE_PAGES_PROJECT.pages.dev
+
+# Production deploy — manual, after the API backend is live. Points the
+# Pages "production" environment (custom domain) at this build.
+deploy:pages:production:
+  <<: *pages_job
+  environment:
+    name: pages-production
+    url: https://app.geoairquality.com
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+  needs:
+    - deploy:pages:staging

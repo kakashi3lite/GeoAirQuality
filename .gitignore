@@ -186,6 +186,12 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 
+# Cloudflare Wrangler (Pages) local state & secrets
+.wrangler/
+frontend/.wrangler/
+.dev.vars
+frontend/.dev.vars
+
 # Runtime / junk
 state.db
 logs/
