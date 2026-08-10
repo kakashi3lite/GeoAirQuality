@@ -1,30 +1,42 @@
-# GeoAirQuality - Environmental Data Engineering Platform
+# GeoAirQuality — Documentation Hub
 
-## Project Overview
-A scalable, edge-optimized air quality monitoring and prediction platform built with modern data engineering practices.
+A real-time air quality platform with personalized safety guidance for
+respiratory patients. This hub is the single entry point to all
+documentation.
 
-## Architecture
+```
+docs/
+├── README.md                 ← you are here
+├── architecture/             what & why (roadmaps)
+├── design/                   planned modules (specs, status-labeled)
+├── guides/                   how to operate
+└── implementation/           phase-by-phase build plans
+```
 
-### Folder Structure
-- `/data-pipeline/` - Dask-GeoPandas based data ingestion and processing pipelines
-- `/api/` - FastAPI-based REST API with Redis caching and PostGIS integration
-- `/edge-nodes/` - NVIDIA Jetson containerized preprocessing modules
-- `/docs/` - Comprehensive documentation and architectural diagrams
-- `/monitoring/` - Prometheus exporters and Grafana dashboards
-- `/k8s/` - Kubernetes manifests and Helm charts
-- `/web/` - WebXR AR overlay prototypes
-- `/tests/` - End-to-end testing suites
+## 📖 Sections
 
-## Key Features
-- **Real-time Processing**: Sub-50ms latency for air quality queries
-- **Edge Computing**: Distributed sensor preprocessing on Jetson modules
-- **Federated Learning**: Privacy-preserving ML model training across edge nodes
-- **AR Visualization**: WebXR-based immersive air quality overlays
-- **Auto-scaling**: Kubernetes HPA with custom metrics
-- **Observability**: Full Prometheus/Grafana monitoring stack
+| Section | Contents |
+|---------|----------|
+| [**Architecture**](architecture/ARCHITECTURE_ROADMAP.md) | System design, scalability, monetization strategy |
+| [**Product Roadmap**](architecture/PRODUCT_ROADMAP.md) | Phase-by-phase product vision, KPIs, competitive strategy |
+| [**Design specs**](design/) | Planned modules: [Auth](design/auth.md) · [ML Pipeline](design/ml-pipeline.md) · [Frontend](design/frontend.md) — **📋 not yet implemented** |
+| [**Guides**](guides/) | [Database](guides/database.md) · [Deployment](guides/deployment.md) · [Performance](guides/performance.md) · [Pipeline](guides/pipeline.md) · [CI/CD](guides/ci-cd.md) · [Security](guides/security.md) |
+| [**Implementation plans**](implementation/implementation-phase1.md) | Detailed build plans per phase |
 
-## Getting Started
-See individual folder READMEs for detailed setup instructions.
+## 🔗 Quick links
 
----
-*Built by Captain Aurelia "Skyforge" Stratos - Chief Environmental Data Engineer*
+| Where | What |
+|-------|------|
+| [API service](../api/README.md) | FastAPI endpoints, run instructions, env vars |
+| [Data pipeline](../data-pipeline/README.md) | Ingestion & processing |
+| [Deploy assets](../deploy/README.md) | k8s, Helm, nginx, monitoring |
+| [Tests](../tests/README.md) | What each test file covers |
+| [Root README](../README.md) | Project map + module status table |
+
+## 🚦 Status legend
+
+| Icon | Meaning |
+|------|---------|
+| ✅ | Implemented & tested |
+| ⚠️ | Partially implemented (see notes) |
+| 📋 | Design spec only — planned |

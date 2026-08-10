@@ -12,7 +12,7 @@
 | Custom regex scan (private keys, AWS, GH tokens, OpenAI, Google, Slack) | ✅ 0 matches (working tree + history) |
 | Jupyter notebook (`GeoAirQuality.ipynb`) | ✅ 0 matches |
 | `.env` files | ✅ none present in tree; `.env` is gitignored |
-| TLS/SSL material (`nginx/ssl/`) | ✅ empty |
+| TLS/SSL material (`deploy/nginx/ssl/`) | ✅ empty |
 | Connection strings | ⚠️ dev-default credentials only (see below) |
 
 **Verdict:** No live secrets are committed to the repository or its history.
@@ -24,7 +24,7 @@
 | # | Location | Finding | Severity | Status |
 |---|----------|---------|----------|--------|
 | 1 | `api/main.py` | `DATABASE_URL` hardcoded with dev creds in source | 🟠 medium | ✅ **Fixed** — now env-driven (`os.environ.get("DATABASE_URL", <dev-default>)`) with a startup warning when the dev default is in use |
-| 2 | `k8s/production-deployment.yaml` | Plaintext `Secret` committed (values are `CHANGE_THIS_*` placeholders) | 🟠 medium (pattern risk) | ✅ **Hardened** — added security comment; production must use SealedSecrets / External Secrets Operator (values never in git) |
+| 2 | `deploy/k8s/production-deployment.yaml` | Plaintext `Secret` committed (values are `CHANGE_THIS_*` placeholders) | 🟠 medium (pattern risk) | ✅ **Hardened** — added security comment; production must use SealedSecrets / External Secrets Operator (values never in git) |
 | 3 | `setup-dev.sh` | `SECRET_KEY` hardcoded as `dev-secret-key-change-in-production` | 🟡 low (dev-only) | ✅ **Fixed** — now generates a random key (`openssl rand -hex 32`) with a safe fallback |
 | 4 | `docs/deployment.md` | `kubectl create secret` example with `user:pass@host` / `secure-password` | 🟡 low | Placeholder example — acceptable; not treated as real |
 | 5 | `docker-compose.yml`, `api/alembic.ini`, `api/migrations/env.py` | `geoair_user:geoair_pass` dev defaults | 🟡 low | Standard local-dev pattern; Docker Compose is development-only |
@@ -87,5 +87,5 @@ docker run --rm -v "$PWD:/repo" -w /repo gitleaks/gitleaks:latest \
 - `.gitlab-ci.yml` — `scan:secrets` blocking gate
 - `.github/workflows/ci.yml` — `secret-scan` blocking gate
 - `.gitignore` — excludes `.env`, `.*` AppleDouble metadata, CI artifacts
-- `k8s/production-deployment.yaml` — placeholder Secret + hardening notes
+- `deploy/k8s/production-deployment.yaml` — placeholder Secret + hardening notes
 - `docs/ci-cd.md` — pipeline runbook incl. security scanning setup

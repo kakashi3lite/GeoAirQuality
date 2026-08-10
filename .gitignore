@@ -180,3 +180,11 @@ report.xml
 *.junit
 bandit.json
 pip-audit*.json
+
+# Runtime / junk
+state.db
+logs/
+
+# Generated pipeline outputs (never commit)
+data/processed/
+data/cache/

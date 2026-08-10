@@ -69,9 +69,9 @@ create_directories() {
     mkdir -p data/processed
     mkdir -p data/cache
     mkdir -p logs
-    mkdir -p monitoring/grafana/dashboards
-    mkdir -p monitoring/grafana/datasources
-    mkdir -p nginx/ssl
+    mkdir -p deploy/monitoring/grafana/dashboards
+    mkdir -p deploy/monitoring/grafana/datasources
+    mkdir -p deploy/nginx/ssl
     mkdir -p api/migrations/versions
     
     print_success "Directories created!"
@@ -110,7 +110,7 @@ create_monitoring_config() {
     print_status "Creating monitoring configuration..."
     
     # Prometheus configuration
-    cat > monitoring/prometheus.yml << EOF
+    cat > deploy/monitoring/prometheus.yml << EOF
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -140,8 +140,8 @@ scrape_configs:
 EOF
 
     # Grafana datasource
-    mkdir -p monitoring/grafana/datasources
-    cat > monitoring/grafana/datasources/prometheus.yml << EOF
+    mkdir -p deploy/monitoring/grafana/datasources
+    cat > deploy/monitoring/grafana/datasources/prometheus.yml << EOF
 apiVersion: 1
 
 datasources:
@@ -160,7 +160,7 @@ EOF
 create_nginx_config() {
     print_status "Creating nginx configuration..."
     
-    cat > nginx/nginx.conf << EOF
+    cat > deploy/nginx/nginx.conf << EOF
 events {
     worker_connections 1024;
 }

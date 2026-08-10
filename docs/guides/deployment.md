@@ -98,19 +98,19 @@ helm repo add grafana https://grafana.github.io/helm-charts
 helm repo update
 
 # Install dependencies
-helm dependency build ./api/chart
+helm dependency build ./deploy/helm
 
 # Deploy to development
-helm install geoairquality ./api/chart \
+helm install geoairquality ./deploy/helm \
   --namespace geoairquality-dev \
   --create-namespace \
-  --values ./api/chart/values-dev.yaml
+  --values ./deploy/helm/values-dev.yaml
 
 # Deploy to production
-helm install geoairquality ./api/chart \
+helm install geoairquality ./deploy/helm \
   --namespace geoairquality-prod \
   --create-namespace \
-  --values ./api/chart/values-prod.yaml
+  --values ./deploy/helm/values-prod.yaml
 ```
 
 ### Configuration Values
@@ -295,7 +295,7 @@ metrics:
 kubectl create namespace geoairquality-dev
 
 # Deploy with minimal resources
-helm install geoairquality-dev ./api/chart \
+helm install geoairquality-dev ./deploy/helm \
   --namespace geoairquality-dev \
   --set replicaCount.api=1 \
   --set replicaCount.pipeline=1 \
@@ -307,20 +307,20 @@ helm install geoairquality-dev ./api/chart \
 
 ```bash
 # Staging with production-like configuration
-helm install geoairquality-staging ./api/chart \
+helm install geoairquality-staging ./deploy/helm \
   --namespace geoairquality-staging \
   --create-namespace \
-  --values ./api/chart/values-staging.yaml
+  --values ./deploy/helm/values-staging.yaml
 ```
 
 ### Production Environment
 
 ```bash
 # Production deployment with all features
-helm install geoairquality ./api/chart \
+helm install geoairquality ./deploy/helm \
   --namespace geoairquality-prod \
   --create-namespace \
-  --values ./api/chart/values-prod.yaml \
+  --values ./deploy/helm/values-prod.yaml \
   --timeout 10m
 ```
 
@@ -469,9 +469,9 @@ kubectl create secret generic geoairquality-secrets \
 
 ```bash
 # Update Helm chart
-helm upgrade geoairquality ./api/chart \
+helm upgrade geoairquality ./deploy/helm \
   --namespace geoairquality-prod \
-  --values ./api/chart/values-prod.yaml
+  --values ./deploy/helm/values-prod.yaml
 
 # Database maintenance
 kubectl exec -it postgresql-primary-0 -- \

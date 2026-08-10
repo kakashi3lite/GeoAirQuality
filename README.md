@@ -1,162 +1,93 @@
-# GeoAirQuality - Environmental Data Engineering Platform
+# GeoAirQuality
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-green.svg)](https://fastapi.tiangolo.com/)
+[![PostGIS](https://img.shields.io/badge/PostGIS-3.3-blue.svg)](https://postgis.net/)
 
-A scalable, production-ready air quality monitoring and prediction platform built with modern data engineering practices. This platform combines real-time data processing, spatial analytics, and high-performance APIs to deliver comprehensive environmental insights.
+A real-time air quality platform that answers one question for
+respiratory patients: **"Is it safe for ME to go outside right now?"**
 
-## 🚀 Features
+It combines **PostGIS spatial analytics**, **weather + news
+intelligence**, and a **condition-calibrated safety engine** into a
+single actionable score with plain-language recommendations.
 
-- **Real-time Data Processing**: Efficient ingestion and processing of air quality data
-- **Spatial Analytics**: PostGIS-powered geospatial queries and analysis
-- **High-Performance API**: FastAPI with Redis caching for sub-second response times
-- **Containerized Deployment**: Docker and Kubernetes ready
-- **Comprehensive Documentation**: Detailed guides for deployment and optimization
-- **Performance Monitoring**: Built-in metrics and optimization strategies
+---
 
-## 🏗️ Architecture
+## 🧭 Repository map
 
-### Core Components
+```
+GeoAirQuality/
+├── README.md            ← you are here
+├── api/                 ✅ FastAPI service (safety engine, news, endpoints)
+├── data-pipeline/       ⚠️ ingestion (simple active; dask disabled)
+├── deploy/              ✅ k8s, helm, nginx, monitoring (consolidated)
+├── docs/                ✅ documentation hub
+├── data/                datasets (raw/processed — generated, untracked)
+├── tests/               ✅ unit + integration suites
+├── frontend/  ml-pipeline/  api/auth/   📋 design stubs → docs/design/
+├── Makefile             shared local/CI commands
+└── .gitlab-ci.yml · .github/workflows/ci.yml   dual-platform CI/CD
+```
 
-- **`/api/`** - FastAPI-based REST API with Redis caching and PostGIS integration
-- **`/data-pipeline/`** - Data ingestion and processing pipelines
-- **`/docs/`** - Comprehensive documentation and guides
-- **`/k8s/`** - Kubernetes deployment manifests
-- **`/tests/`** - Test suites and validation
+## 📊 Module status
 
-### Technology Stack
+| Module | Status | Notes |
+|--------|--------|-------|
+| **API service** (`api/`) | ✅ Implemented | 8 endpoints, PostGIS, Redis cache |
+| **Safety engine** (`services/safety_engine.py`) | ✅ Implemented | Condition-calibrated risk score (Phase 1) |
+| **News intelligence** (`services/news_*`) | ✅ Implemented | AirNow + NewsAPI feed the score (Phase 2) |
+| **Data pipeline** (`data-pipeline/`) | ⚠️ Partial | `ingest_simple_minimal.py` active; Dask disabled |
+| **CI/CD** (`.gitlab-ci.yml`, `.github/`) | ✅ Implemented | lint→test→build→scan→publish→deploy |
+| **Security** | ✅ Hardened | 0-leak audit, gitleaks blocking in CI |
+| **Auth** (`api/auth/`) | 📋 Design only | JWT/RBAC spec in `docs/design/auth.md` |
+| **ML pipeline** (`ml-pipeline/`) | 📋 Design only | Forecasters spec in `docs/design/ml-pipeline.md` |
+| **Frontend** (`frontend/`) | 📋 Design only | React/MapLibre spec in `docs/design/frontend.md` |
 
-- **Backend**: FastAPI, SQLAlchemy, Alembic
-- **Database**: PostgreSQL with PostGIS extension
-- **Caching**: Redis with optimized TTL strategies
-- **Containerization**: Docker, Kubernetes
-- **Data Processing**: Pandas, GeoPandas
-- **Monitoring**: Prometheus-compatible metrics
+## 🚀 Quick start
 
-## 🚀 Quick Start
+```bash
+# Full stack (PostGIS + Redis + API + pipeline + monitoring)
+docker-compose up --build
 
-### Prerequisites
+# Or local:
+make install          # pip deps for api + pipeline
+make test             # unit tests (no services needed)
+cd api && uvicorn main:app --reload
+```
 
-- Python 3.8+
-- Docker and Docker Compose
-- PostgreSQL with PostGIS
-- Redis (optional, for caching)
+Then open http://localhost:8000/docs (Swagger) and try the hero endpoint:
 
-### Local Development
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/kakashi3lite/GeoAirQuality.git
-   cd GeoAirQuality
-   ```
-
-2. **Set up the API service**
-   ```bash
-   cd api
-   pip install -r requirements.txt
-   uvicorn main:app --reload
-   ```
-
-3. **Run the data pipeline**
-   ```bash
-   cd data-pipeline
-   pip install -r requirements.txt
-   python ingest.py
-   ```
-
-### Docker Deployment
-
-1. **Build and run with Docker Compose**
-   ```bash
-   docker-compose up --build
-   ```
-
-2. **Access the API**
-   - API Documentation: http://localhost:8000/docs
-   - Health Check: http://localhost:8000/health
-
-### Kubernetes Deployment
-
-1. **Deploy to Kubernetes**
-   ```bash
-   kubectl apply -f k8s/
-   ```
-
-2. **Monitor deployment**
-   ```bash
-   kubectl get pods -l app=geoairquality
-   ```
-
-## 📊 API Endpoints
-
-- `GET /health` - Health check endpoint
-- `GET /air-quality/stations` - List all monitoring stations
-- `GET /air-quality/data` - Query air quality data with filters
-- `GET /air-quality/spatial` - Spatial queries within geographic bounds
-- `POST /air-quality/batch` - Batch data ingestion
-
-For detailed API documentation, visit `/docs` when running the service.
+```bash
+curl "http://localhost:8000/api/v1/patients/demo/safety-assessment?lat=40.7128&lon=-74.0060"
+```
 
 ## 📚 Documentation
 
-- [Deployment Guide](docs/deployment.md) - Comprehensive deployment instructions
-- [Performance Optimization](docs/performance.md) - Performance tuning and monitoring
-- [Database Schema](docs/database.md) - Database design and migrations
-- [Data Pipeline](docs/pipeline.md) - Data processing workflows
+Start at the [**docs hub**](docs/README.md) — it links architecture,
+design specs, and operational guides.
 
-## 🔧 Configuration
-
-### Environment Variables
-
-```bash
-# Database
-DATABASE_URL=postgresql://user:password@localhost/geoairquality
-
-# Redis (optional)
-REDIS_URL=redis://localhost:6379
-
-# API Settings
-API_HOST=0.0.0.0
-API_PORT=8000
-```
-
-## 🚀 Performance
-
-- **API Response Time**: < 100ms for cached queries
-- **Database Queries**: Optimized with spatial indexing
-- **Caching Strategy**: Redis with intelligent TTL management
-- **Scalability**: Horizontal scaling with Kubernetes HPA
+| Section | Link |
+|---------|------|
+| Architecture & roadmap | [docs/architecture](docs/architecture/) |
+| Design specs (auth / ML / frontend) | [docs/design](docs/design/) |
+| Deployment · Database · Performance · Pipeline · CI/CD · Security | [docs/guides](docs/guides/) |
+| API service | [api/README.md](api/README.md) |
+| Deploy assets | [deploy/README.md](deploy/README.md) |
+| Tests | [tests/README.md](tests/README.md) |
 
 ## 🧪 Testing
 
 ```bash
-# Run tests
-pytest tests/
-
-# Run with coverage
-pytest --cov=api tests/
+make lint             # enforced lint (services/ + tests/)
+make test             # supported suite (54 tests)
+make test-integration # CI-only: needs PostGIS + Redis (RUN_INTEGRATION=1)
 ```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with modern data engineering best practices
-- Optimized for production deployment
-- Designed for scalability and performance
+MIT — see [LICENSE](LICENSE).
 
 ---
 
-**GeoAirQuality** - Empowering environmental insights through data engineering excellence.
+**GeoAirQuality** — personalized environmental safety for respiratory health.

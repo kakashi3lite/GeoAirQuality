@@ -1,0 +1,67 @@
+apiVersion: v2
+name: geoairquality
+description: A Helm chart for GeoAirQuality - Real-time air quality monitoring with spatial analytics
+
+# Chart version
+version: 0.1.0
+
+# Application version
+appVersion: "1.0.0"
+
+# Chart type
+type: application
+
+# Keywords for chart discovery
+keywords:
+  - air-quality
+  - geospatial
+  - monitoring
+  - environmental
+  - iot
+  - postgis
+  - fastapi
+  - dask
+
+# Home page
+home: https://github.com/your-org/geoairquality
+
+# Sources
+sources:
+  - https://github.com/your-org/geoairquality
+
+# Maintainers
+maintainers:
+  - name: Captain Aurelia Skyforge Stratos
+    email: aurelia@geoairquality.com
+    url: https://github.com/aurelia-skyforge
+
+# Dependencies
+dependencies:
+  - name: postgresql
+    version: "12.12.10"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: redis
+    version: "18.1.5"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: prometheus
+    version: "25.1.0"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: monitoring.prometheus.enabled
+  - name: grafana
+    version: "7.0.3"
+    repository: https://grafana.github.io/helm-charts
+    condition: monitoring.grafana.enabled
+
+# Annotations
+annotations:
+  category: Analytics
+  licenses: MIT
+  images: |
+    - name: geoairquality-api
+      image: geoairquality/api:1.0.0
+    - name: geoairquality-pipeline
+      image: geoairquality/pipeline:1.0.0
+    - name: geoairquality-edge
+      image: geoairquality/edge:1.0.0

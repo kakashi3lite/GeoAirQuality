@@ -7,7 +7,7 @@ A production-ready environmental data platform combining real-time air quality m
 This is a **microservices architecture** with spatial data processing capabilities:
 - `/api/` - FastAPI service with PostGIS spatial queries and Redis caching
 - `/data-pipeline/` - Dask-powered parallel data ingestion and processing
-- `/k8s/` - Kubernetes manifests for cloud-native deployment
+- `/deploy/k8s/` - Kubernetes manifests for cloud-native deployment
 - `GeoAirQuality.ipynb` - Research notebook for time-series analysis and forecasting
 
 ## Key Technologies & Integration Points
@@ -51,7 +51,7 @@ alembic upgrade head
 - **Cache testing**: Mock Redis connections for cache layer tests
 
 ### Deployment Patterns
-- **Kubernetes-native**: Use `/k8s/api-deployment.yaml` as template (3 replicas)
+- **Kubernetes-native**: Use `/deploy/k8s/api-deployment.yaml` as template (3 replicas)
 - **Environment config**: Database URLs via `secretKeyRef`, Redis via `configMapKeyRef`
 - **Health checks**: `/health` endpoint for Kubernetes probes
 - **Container optimization**: Multi-stage builds with GDAL/PostGIS dependencies
@@ -119,7 +119,7 @@ ON ST_Contains(g.geometry, r.location)
 - **NVIDIA Jetson modules**: Containerized preprocessing at sensor locations
 - **WebXR AR overlays**: Immersive data visualization prototypes
 - **Federated learning**: Privacy-preserving ML across distributed edge nodes
-- **Edge deployment**: See `/docs/deployment.md` for edge-specific patterns
+- **Edge deployment**: See `/docs/guides/deployment.md` for edge-specific patterns
 
 ## Hierarchical Spatial Grid System
 - **Multi-resolution grids**: 1-degree (global), 0.1-degree (high-density areas)
@@ -137,4 +137,4 @@ ON ST_Contains(g.geometry, r.location)
 - **NVIDIA Jetson modules**: Containerized preprocessing at sensor locations
 - **WebXR AR overlays**: Immersive data visualization prototypes
 - **Federated learning**: Privacy-preserving ML across distributed edge nodes
-- **Edge deployment**: See `/docs/deployment.md` for edge-specific patterns
+- **Edge deployment**: See `/docs/guides/deployment.md` for edge-specific patterns
