@@ -173,3 +173,10 @@ cython_debug/
 # macOS metadata artifacts
 ._*
 .DS_Store
+
+# CI artifacts
+coverage.xml
+report.xml
+*.junit
+bandit.json
+pip-audit*.json

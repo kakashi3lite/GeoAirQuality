@@ -39,10 +39,7 @@ class RecommendationEngine:
         self.thresholds = context.thresholds()
 
     def _condition_label(self) -> str:
-        labels = [
-            _CONDITION_LABELS.get(c.lower(), c)
-            for c in self.context.conditions
-        ]
+        labels = [_CONDITION_LABELS.get(c.lower(), c) for c in self.context.conditions]
         if len(labels) == 1:
             return labels[0]
         return "your conditions"
@@ -65,170 +62,210 @@ class RecommendationEngine:
         # readings the score defaults to neutral (100), so we must suppress
         # the favorable guidance and replace it with a caution.
         if data_status == "unavailable":
-            recommendations.append({
-                "type": "general",
-                "text": (
-                    "No recent monitoring data is available for your area. "
-                    "Use caution, check official local guidance, and rely on "
-                    "visible conditions (smoke, haze, odor)."
-                ),
-            })
+            recommendations.append(
+                {
+                    "type": "general",
+                    "text": (
+                        "No recent monitoring data is available for your area. "
+                        "Use caution, check official local guidance, and rely on "
+                        "visible conditions (smoke, haze, odor)."
+                    ),
+                }
+            )
         elif data_status == "partial":
-            recommendations.append({
-                "type": "general",
-                "text": (
-                    "Monitoring coverage in your area is partial — some "
-                    "pollutant readings are missing, so this estimate is "
-                    "less precise than usual."
-                ),
-            })
+            recommendations.append(
+                {
+                    "type": "general",
+                    "text": (
+                        "Monitoring coverage in your area is partial — some "
+                        "pollutant readings are missing, so this estimate is "
+                        "less precise than usual."
+                    ),
+                }
+            )
 
         # --- Base guidance by risk level -------------------------------
         # (skipped entirely when no data is available — see above)
         if data_status != "unavailable":
             if score >= 80:
-                recommendations.append({
-                    "type": "general",
-                    "text": (
-                        f"Conditions are favorable for {label}. "
-                        f"Enjoy your outdoor activities."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "general",
+                        "text": (
+                            f"Conditions are favorable for {label}. "
+                            f"Enjoy your outdoor activities."
+                        ),
+                    }
+                )
             elif score >= 60:
-                recommendations.append({
-                    "type": "precaution",
-                    "text": (
-                        f"Limit prolonged outdoor exertion. Keep your rescue "
-                        f"medication accessible if you step outside."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "precaution",
+                        "text": (
+                            f"Limit prolonged outdoor exertion. Keep your rescue "
+                            f"medication accessible if you step outside."
+                        ),
+                    }
+                )
             elif score >= 40:
-                recommendations.append({
-                    "type": "precaution",
-                    "text": (
-                        "Avoid strenuous outdoor activity. Consider staying "
-                        "indoors where possible and keep windows closed."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "precaution",
+                        "text": (
+                            "Avoid strenuous outdoor activity. Consider staying "
+                            "indoors where possible and keep windows closed."
+                        ),
+                    }
+                )
             else:
-                recommendations.append({
-                    "type": "precaution",
-                    "text": (
-                        "Stay indoors with windows closed. Use air purification "
-                        "if available. Avoid outdoor activity entirely."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "precaution",
+                        "text": (
+                            "Stay indoors with windows closed. Use air purification "
+                            "if available. Avoid outdoor activity entirely."
+                        ),
+                    }
+                )
 
         # --- Pollutant-specific guidance ------------------------------
         if snapshot.pm25 is not None and snapshot.pm25 > self.thresholds.pm25:
-            recommendations.append({
-                "type": "precaution",
-                "text": (
-                    f"PM2.5 is {snapshot.pm25:.0f} µg/m³ — above your "
-                    f"{label} threshold of {self.thresholds.pm25:.0f} µg/m³. "
-                    f"Wear an N95 mask if you must go outside and limit "
-                    f"exposure to under 30 minutes."
-                ),
-            })
+            recommendations.append(
+                {
+                    "type": "precaution",
+                    "text": (
+                        f"PM2.5 is {snapshot.pm25:.0f} µg/m³ — above your "
+                        f"{label} threshold of {self.thresholds.pm25:.0f} µg/m³. "
+                        f"Wear an N95 mask if you must go outside and limit "
+                        f"exposure to under 30 minutes."
+                    ),
+                }
+            )
         if snapshot.o3 is not None and snapshot.o3 > self.thresholds.o3:
-            recommendations.append({
-                "type": "timing",
-                "text": (
-                    "Ozone levels are elevated. Ozone typically peaks in "
-                    "the afternoon — plan outdoor activity for the morning."
-                ),
-            })
+            recommendations.append(
+                {
+                    "type": "timing",
+                    "text": (
+                        "Ozone levels are elevated. Ozone typically peaks in "
+                        "the afternoon — plan outdoor activity for the morning."
+                    ),
+                }
+            )
         if snapshot.no2 is not None and snapshot.no2 > self.thresholds.no2:
-            recommendations.append({
-                "type": "location",
-                "text": (
-                    "Nitrogen dioxide is elevated, often near busy roads. "
-                    "Choose routes away from major traffic corridors."
-                ),
-            })
+            recommendations.append(
+                {
+                    "type": "location",
+                    "text": (
+                        "Nitrogen dioxide is elevated, often near busy roads. "
+                        "Choose routes away from major traffic corridors."
+                    ),
+                }
+            )
 
         # --- Weather-specific guidance --------------------------------
-        if snapshot.humidity is not None and snapshot.humidity > self.thresholds.humidity_max:
-            recommendations.append({
-                "type": "precaution",
-                "text": (
-                    f"High humidity ({snapshot.humidity:.0f}%) can trigger "
-                    f"{label}. Consider using your preventive inhaler "
-                    f"before going out."
-                ),
-            })
-        if snapshot.temperature is not None and snapshot.temperature < self.thresholds.temp_min:
-            recommendations.append({
-                "type": "precaution",
-                "text": (
-                    "Cold air can constrict airways. Cover your nose and "
-                    "mouth with a scarf and warm up gradually before exertion."
-                ),
-            })
+        if (
+            snapshot.humidity is not None
+            and snapshot.humidity > self.thresholds.humidity_max
+        ):
+            recommendations.append(
+                {
+                    "type": "precaution",
+                    "text": (
+                        f"High humidity ({snapshot.humidity:.0f}%) can trigger "
+                        f"{label}. Consider using your preventive inhaler "
+                        f"before going out."
+                    ),
+                }
+            )
+        if (
+            snapshot.temperature is not None
+            and snapshot.temperature < self.thresholds.temp_min
+        ):
+            recommendations.append(
+                {
+                    "type": "precaution",
+                    "text": (
+                        "Cold air can constrict airways. Cover your nose and "
+                        "mouth with a scarf and warm up gradually before exertion."
+                    ),
+                }
+            )
 
         # --- News/event-specific guidance -----------------------------
-        for event in (news_events or []):
+        for event in news_events or []:
             category = (event.get("category") or "").lower()
             title = event.get("title", "Air quality event")
             distance = float(event.get("distance_km", 0.0))
             if category == "wildfire":
-                recommendations.append({
-                    "type": "location",
-                    "text": (
-                        f"Active wildfire smoke reported {distance:.0f} km "
-                        f"away ({title}). Avoid that direction and keep "
-                        f"windows closed."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "location",
+                        "text": (
+                            f"Active wildfire smoke reported {distance:.0f} km "
+                            f"away ({title}). Avoid that direction and keep "
+                            f"windows closed."
+                        ),
+                    }
+                )
             elif category in ("industrial", "traffic"):
-                recommendations.append({
-                    "type": "location",
-                    "text": (
-                        f"Localized pollution reported {distance:.0f} km "
-                        f"away ({title}). Consider alternate routes that "
-                        f"avoid the affected area."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "location",
+                        "text": (
+                            f"Localized pollution reported {distance:.0f} km "
+                            f"away ({title}). Consider alternate routes that "
+                            f"avoid the affected area."
+                        ),
+                    }
+                )
             elif category == "health_advisory":
-                recommendations.append({
-                    "type": "precaution",
-                    "text": (
-                        f"A health advisory affecting {label} patients is "
-                        f"active ({title}). Limit outdoor exposure until it "
-                        f"is lifted."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "precaution",
+                        "text": (
+                            f"A health advisory affecting {label} patients is "
+                            f"active ({title}). Limit outdoor exposure until it "
+                            f"is lifted."
+                        ),
+                    }
+                )
 
         # --- Route-specific guidance -----------------------------------
         if route_risk is not None:
             route_score = int(route_risk.get("route_risk_score", score))
             diff = route_score - score
             if diff >= 10:
-                recommendations.append({
-                    "type": "route",
-                    "text": (
-                        f"The route to your destination is notably safer "
-                        f"than your current area (route safety {route_score}/100 "
-                        f"vs {score}/100). Consider heading out now."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "route",
+                        "text": (
+                            f"The route to your destination is notably safer "
+                            f"than your current area (route safety {route_score}/100 "
+                            f"vs {score}/100). Consider heading out now."
+                        ),
+                    }
+                )
             elif diff <= -10:
-                recommendations.append({
-                    "type": "route",
-                    "text": (
-                        f"The route to your destination is riskier than your "
-                        f"current area (route safety {route_score}/100). "
-                        f"Consider delaying travel or choosing an alternate path."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "route",
+                        "text": (
+                            f"The route to your destination is riskier than your "
+                            f"current area (route safety {route_score}/100). "
+                            f"Consider delaying travel or choosing an alternate path."
+                        ),
+                    }
+                )
             else:
-                recommendations.append({
-                    "type": "route",
-                    "text": (
-                        f"Route safety to your destination is {route_score}/100 "
-                        f"— similar to your current area. Proceed with the "
-                        f"general precautions above."
-                    ),
-                })
+                recommendations.append(
+                    {
+                        "type": "route",
+                        "text": (
+                            f"Route safety to your destination is {route_score}/100 "
+                            f"— similar to your current area. Proceed with the "
+                            f"general precautions above."
+                        ),
+                    }
+                )
 
         return recommendations

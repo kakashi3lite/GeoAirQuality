@@ -57,6 +57,7 @@ class ConditionThresholds:
     multiple conditions, the merged thresholds take the most protective
     (worst-case) value for each metric.
     """
+
     pm25: float = 35.0
     pm10: float = 100.0
     o3: float = 70.0
@@ -70,24 +71,48 @@ class ConditionThresholds:
 
 CONDITION_THRESHOLDS: Dict[str, ConditionThresholds] = {
     "asthma": ConditionThresholds(
-        pm25=35.0, pm10=100.0, o3=70.0, no2=100.0,
-        humidity_min=20.0, humidity_max=85.0,
-        temp_min=5.0, temp_max=32.0, label="asthma",
+        pm25=35.0,
+        pm10=100.0,
+        o3=70.0,
+        no2=100.0,
+        humidity_min=20.0,
+        humidity_max=85.0,
+        temp_min=5.0,
+        temp_max=32.0,
+        label="asthma",
     ),
     "copd": ConditionThresholds(
-        pm25=25.0, pm10=50.0, o3=60.0, no2=100.0,
-        humidity_min=15.0, humidity_max=90.0,
-        temp_min=0.0, temp_max=30.0, label="COPD",
+        pm25=25.0,
+        pm10=50.0,
+        o3=60.0,
+        no2=100.0,
+        humidity_min=15.0,
+        humidity_max=90.0,
+        temp_min=0.0,
+        temp_max=30.0,
+        label="COPD",
     ),
     "bronchitis": ConditionThresholds(
-        pm25=35.0, pm10=100.0, o3=70.0, no2=100.0,
-        humidity_min=20.0, humidity_max=90.0,
-        temp_min=5.0, temp_max=32.0, label="bronchitis",
+        pm25=35.0,
+        pm10=100.0,
+        o3=70.0,
+        no2=100.0,
+        humidity_min=20.0,
+        humidity_max=90.0,
+        temp_min=5.0,
+        temp_max=32.0,
+        label="bronchitis",
     ),
     "allergy": ConditionThresholds(
-        pm25=40.0, pm10=54.0, o3=80.0, no2=120.0,
-        humidity_min=10.0, humidity_max=95.0,
-        temp_min=-5.0, temp_max=35.0, label="allergies",
+        pm25=40.0,
+        pm10=54.0,
+        o3=80.0,
+        no2=120.0,
+        humidity_min=10.0,
+        humidity_max=95.0,
+        temp_min=-5.0,
+        temp_max=35.0,
+        label="allergies",
     ),
 }
 
@@ -95,6 +120,7 @@ CONDITION_THRESHOLDS: Dict[str, ConditionThresholds] = {
 @dataclass
 class PatientContext:
     """Lightweight, ORM-free patient profile for the scoring engine."""
+
     user_id: str
     conditions: List[str] = field(default_factory=lambda: ["asthma"])
     aqi_threshold: float = 100.0
@@ -140,6 +166,7 @@ class PatientContext:
 @dataclass
 class EnvironmentalSnapshot:
     """Current environmental conditions at a location."""
+
     aqi: Optional[float] = None
     pm25: Optional[float] = None
     pm10: Optional[float] = None
@@ -150,8 +177,8 @@ class EnvironmentalSnapshot:
     wind_speed: Optional[float] = None
     wind_direction: Optional[str] = None
     source_timestamp: Optional[datetime] = None
-    reading_count: int = 0          # weather readings found
-    aq_reading_count: int = 0       # air-quality readings found
+    reading_count: int = 0  # weather readings found
+    aq_reading_count: int = 0  # air-quality readings found
     grid_id: Optional[str] = None
 
 
@@ -235,29 +262,33 @@ class RiskScorer:
             s = _pollutant_score(value, threshold)
             scores.append(s)
             if value is not None and s < 100:
-                factors.append({
-                    "factor": name,
-                    "value": round(float(value), 1),
-                    "threshold": threshold,
-                    "unit": unit,
-                    "detail": (
-                        f"{name} is {value:.1f} {unit} — above the safe "
-                        f"threshold of {threshold:.0f} {unit} for your condition"
-                    ),
-                })
+                factors.append(
+                    {
+                        "factor": name,
+                        "value": round(float(value), 1),
+                        "threshold": threshold,
+                        "unit": unit,
+                        "detail": (
+                            f"{name} is {value:.1f} {unit} — above the safe "
+                            f"threshold of {threshold:.0f} {unit} for your condition"
+                        ),
+                    }
+                )
         aqi_s = _aqi_score(snapshot.aqi)
         scores.append(aqi_s)
         if snapshot.aqi is not None and aqi_s < 100:
-            factors.append({
-                "factor": "Air Quality Index",
-                "value": round(float(snapshot.aqi), 0),
-                "threshold": self.context.aqi_threshold,
-                "unit": "index",
-                "detail": (
-                    f"Air Quality Index is {snapshot.aqi:.0f} — elevated "
-                    f"for your condition (threshold {self.context.aqi_threshold:.0f})"
-                ),
-            })
+            factors.append(
+                {
+                    "factor": "Air Quality Index",
+                    "value": round(float(snapshot.aqi), 0),
+                    "threshold": self.context.aqi_threshold,
+                    "unit": "index",
+                    "detail": (
+                        f"Air Quality Index is {snapshot.aqi:.0f} — elevated "
+                        f"for your condition (threshold {self.context.aqi_threshold:.0f})"
+                    ),
+                }
+            )
         component = min(scores) if scores else 100.0
         return component, factors
 
@@ -272,47 +303,53 @@ class RiskScorer:
         if snapshot.temperature is not None:
             if snapshot.temperature < t.temp_min or snapshot.temperature > t.temp_max:
                 penalty = max(penalty, 20.0)
-                factors.append({
-                    "factor": "Temperature",
-                    "value": round(float(snapshot.temperature), 1),
-                    "threshold": f"{t.temp_min:.0f}–{t.temp_max:.0f}",
-                    "unit": "°C",
-                    "detail": (
-                        f"Temperature of {snapshot.temperature:.0f}°C is outside "
-                        f"the comfortable range ({t.temp_min:.0f}–{t.temp_max:.0f}°C) "
-                        f"for your condition"
-                    ),
-                })
+                factors.append(
+                    {
+                        "factor": "Temperature",
+                        "value": round(float(snapshot.temperature), 1),
+                        "threshold": f"{t.temp_min:.0f}–{t.temp_max:.0f}",
+                        "unit": "°C",
+                        "detail": (
+                            f"Temperature of {snapshot.temperature:.0f}°C is outside "
+                            f"the comfortable range ({t.temp_min:.0f}–{t.temp_max:.0f}°C) "
+                            f"for your condition"
+                        ),
+                    }
+                )
 
         if snapshot.humidity is not None:
             if snapshot.humidity > t.humidity_max or snapshot.humidity < t.humidity_min:
                 penalty = max(penalty, 25.0)
-                factors.append({
-                    "factor": "Humidity",
-                    "value": round(float(snapshot.humidity), 1),
-                    "threshold": f"{t.humidity_min:.0f}–{t.humidity_max:.0f}",
-                    "unit": "%",
-                    "detail": (
-                        f"Humidity of {snapshot.humidity:.0f}% can aggravate "
-                        f"your condition (comfortable range "
-                        f"{t.humidity_min:.0f}–{t.humidity_max:.0f}%)"
-                    ),
-                })
+                factors.append(
+                    {
+                        "factor": "Humidity",
+                        "value": round(float(snapshot.humidity), 1),
+                        "threshold": f"{t.humidity_min:.0f}–{t.humidity_max:.0f}",
+                        "unit": "%",
+                        "detail": (
+                            f"Humidity of {snapshot.humidity:.0f}% can aggravate "
+                            f"your condition (comfortable range "
+                            f"{t.humidity_min:.0f}–{t.humidity_max:.0f}%)"
+                        ),
+                    }
+                )
 
         # Stagnant air traps pollutants close to the ground
         if snapshot.wind_speed is not None and snapshot.wind_speed < 5.0:
             if (snapshot.aqi or 0) >= 100:
                 penalty = max(penalty, 10.0)
-                factors.append({
-                    "factor": "Stagnant air",
-                    "value": round(float(snapshot.wind_speed), 1),
-                    "threshold": 5.0,
-                    "unit": "km/h",
-                    "detail": (
-                        f"Low wind speed ({snapshot.wind_speed:.0f} km/h) is "
-                        f"trapping pollutants near ground level"
-                    ),
-                })
+                factors.append(
+                    {
+                        "factor": "Stagnant air",
+                        "value": round(float(snapshot.wind_speed), 1),
+                        "threshold": 5.0,
+                        "unit": "km/h",
+                        "detail": (
+                            f"Low wind speed ({snapshot.wind_speed:.0f} km/h) is "
+                            f"trapping pollutants near ground level"
+                        ),
+                    }
+                )
 
         component = max(100.0 - penalty, 0.0)
         return component, factors
@@ -339,17 +376,19 @@ class RiskScorer:
             impact = severity * relevance / 100.0 * proximity
             score = max(20.0, 100.0 - impact)
             worst = min(worst, score)
-            factors.append({
-                "factor": "News event",
-                "value": event.get("title", "Air quality event"),
-                "threshold": None,
-                "unit": None,
-                "detail": (
-                    f"{event.get('title', 'Air quality event')} "
-                    f"({event.get('category', 'event')}) reported "
-                    f"{distance:.1f} km away"
-                ),
-            })
+            factors.append(
+                {
+                    "factor": "News event",
+                    "value": event.get("title", "Air quality event"),
+                    "threshold": None,
+                    "unit": None,
+                    "detail": (
+                        f"{event.get('title', 'Air quality event')} "
+                        f"({event.get('category', 'event')}) reported "
+                        f"{distance:.1f} km away"
+                    ),
+                }
+            )
         return worst, factors
 
     def score_history_component(
@@ -409,15 +448,12 @@ class RiskScorer:
 
         # Contribution percentages are proportional to each component's
         # deficit from perfect safety (100).
-        deficits = {
-            k: max(0.0, 100.0 - v) for k, v in component_scores.items()
-        }
+        deficits = {k: max(0.0, 100.0 - v) for k, v in component_scores.items()}
         total_deficit = sum(deficits.values())
         contributions = {}
         if total_deficit > 0:
             contributions = {
-                k: int(round(v / total_deficit * 100.0))
-                for k, v in deficits.items()
+                k: int(round(v / total_deficit * 100.0)) for k, v in deficits.items()
             }
             # Normalize rounding drift so contributions sum to ~100
             diff = 100 - sum(contributions.values())

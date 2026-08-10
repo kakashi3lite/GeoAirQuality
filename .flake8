@@ -1,0 +1,7 @@
+[flake8]
+max-line-length = 100
+# E203/E501 are incompatible with black's formatting; W503 conflicts with black.
+extend-ignore = E203,W503
+# Tests intentionally insert sys.path before imports (standalone runnable).
+per-file-ignores =
+    tests/*:E402

@@ -16,7 +16,7 @@ import sys
 import os
 from datetime import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'api'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
 
 from services.safety_engine import (
     PatientContext,
@@ -145,7 +145,9 @@ def test_weather_penalties():
     context = make_context(conditions=("asthma",))
     scorer = RiskScorer(context)
     # humid (asthma max 85) + stagnant + hot
-    snapshot = clean_snapshot(humidity=95.0, wind_speed=2.0, temperature=38.0, aqi=150.0)
+    snapshot = clean_snapshot(
+        humidity=95.0, wind_speed=2.0, temperature=38.0, aqi=150.0
+    )
     score, factors = scorer.score_weather_component(snapshot)
     assert score < 100.0
     names = {f["factor"] for f in factors}
@@ -174,20 +176,20 @@ def test_news_no_events_neutral():
 def test_news_severe_nearby_event_reduces_score():
     context = make_context()
     scorer = RiskScorer(context)
-    events = [{
-        "title": "Wildfire smoke advisory",
-        "category": "wildfire",
-        "severity": 90,
-        "respiratory_relevance": 90,
-        "distance_km": 5.0,
-    }]
+    events = [
+        {
+            "title": "Wildfire smoke advisory",
+            "category": "wildfire",
+            "severity": 90,
+            "respiratory_relevance": 90,
+            "distance_km": 5.0,
+        }
+    ]
     score, factors = scorer.score_news_component(events)
     assert score < 100.0
     assert len(factors) == 1
     # far event has less impact
-    far_score, _ = scorer.score_news_component([
-        {**events[0], "distance_km": 24.0}
-    ])
+    far_score, _ = scorer.score_news_component([{**events[0], "distance_km": 24.0}])
     assert far_score > score
 
 
@@ -252,13 +254,15 @@ def test_recommendation_news_wildfire_location_advice():
     scorer = RiskScorer(context)
     engine = RecommendationEngine(context)
     snapshot = clean_snapshot()
-    events = [{
-        "title": "Wildfire smoke advisory",
-        "category": "wildfire",
-        "severity": 90,
-        "respiratory_relevance": 90,
-        "distance_km": 5.0,
-    }]
+    events = [
+        {
+            "title": "Wildfire smoke advisory",
+            "category": "wildfire",
+            "severity": 90,
+            "respiratory_relevance": 90,
+            "distance_km": 5.0,
+        }
+    ]
     assessment = scorer.assess(snapshot, news_events=events)
     recs = engine.generate(assessment, snapshot, news_events=events)
     texts = " ".join(r["text"].lower() for r in recs)
@@ -324,9 +328,13 @@ def test_recommendation_partial_data_note():
 if __name__ == "__main__":
     # Minimal runner: executes each test_* function, reports failures.
     import traceback
+
     failures = 0
-    tests = [(name, fn) for name, fn in sorted(globals().items())
-             if name.startswith("test_") and callable(fn)]
+    tests = [
+        (name, fn)
+        for name, fn in sorted(globals().items())
+        if name.startswith("test_") and callable(fn)
+    ]
     for name, fn in tests:
         try:
             fn()

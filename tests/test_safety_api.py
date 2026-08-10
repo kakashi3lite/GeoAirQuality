@@ -19,7 +19,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'api'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
 
 import pytest
 from fastapi.testclient import TestClient
@@ -166,6 +166,7 @@ async def _async(obj):
 def _client(session: FakeSession):
     def override_get_db():
         yield session
+
     main.app.dependency_overrides[main.get_db] = override_get_db
     client = TestClient(main.app)
     return client
