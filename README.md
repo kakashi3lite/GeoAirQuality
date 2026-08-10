@@ -69,6 +69,7 @@ design specs, and operational guides.
 
 | Section | Link |
 |---------|------|
+| Blue Ocean strategy (verified research) | [docs/strategy/blue-ocean.md](docs/strategy/blue-ocean.md) |
 | Architecture & roadmap | [docs/architecture](docs/architecture/) |
 | Design specs (auth / ML / frontend) | [docs/design](docs/design/) |
 | Deployment · Database · Performance · Pipeline · CI/CD · Security | [docs/guides](docs/guides/) |

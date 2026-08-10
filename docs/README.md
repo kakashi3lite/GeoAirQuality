@@ -17,6 +17,7 @@ docs/
 
 | Section | Contents |
 |---------|----------|
+| [**Strategy**](strategy/blue-ocean.md) | **Blue Ocean thesis** — verified competitive research + how to own the unoccupied market space |
 | [**Architecture**](architecture/ARCHITECTURE_ROADMAP.md) | System design, scalability, monetization strategy |
 | [**Product Roadmap**](architecture/PRODUCT_ROADMAP.md) | Phase-by-phase product vision, KPIs, competitive strategy |
 | [**Design specs**](design/) | Planned modules: [Auth](design/auth.md) · [ML Pipeline](design/ml-pipeline.md) · [Frontend](design/frontend.md) · **[UI/UX reference](design/uiux.md)** — **📋 not yet implemented** |
