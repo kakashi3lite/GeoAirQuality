@@ -87,7 +87,7 @@ DATABASE_URL=postgresql+asyncpg://geoair_user:geoair_pass@localhost:5432/geoairq
 REDIS_URL=redis://localhost:6379/0
 LOG_LEVEL=INFO
 ENVIRONMENT=development
-SECRET_KEY=dev-secret-key-change-in-production
+SECRET_KEY=$(openssl rand -hex 32 2>/dev/null || echo "dev-secret-key-change-in-production")
 CORS_ORIGINS=["http://localhost:3000", "http://localhost:8080"]
 EOF
 

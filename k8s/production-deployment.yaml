@@ -28,6 +28,9 @@ data:
 ---
 
 ## Secret for Sensitive Configuration
+## SECURITY: keep placeholder values (CHANGE_THIS_*) — never commit real
+## credentials. For production, use SealedSecrets (bitnami/sealed-secrets)
+## or the External Secrets Operator so real values never appear in git.
 apiVersion: v1
 kind: Secret
 metadata:

@@ -6,6 +6,7 @@ Main application entry point with spatial air quality API endpoints.
 import logging
 import json
 import asyncio
+import os
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -51,8 +52,16 @@ SAFETY_CACHE_HITS = Counter(
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database configuration
-DATABASE_URL = "postgresql://geoair_user:geoair_pass@postgres:5432/geoairquality"
+# Database configuration — read from the environment (k8s Secret / .env /
+# CI service), falling back to the LOCAL DEVELOPMENT default only. The dev
+# default is never intended for production.
+_DEFAULT_DATABASE_URL = "postgresql://geoair_user:geoair_pass@postgres:5432/geoairquality"
+DATABASE_URL = os.environ.get("DATABASE_URL", _DEFAULT_DATABASE_URL)
+if DATABASE_URL == _DEFAULT_DATABASE_URL:
+    logger.warning(
+        "DATABASE_URL is not set — using the LOCAL DEVELOPMENT default "
+        "(not for production). Set DATABASE_URL via environment or k8s Secret."
+    )
 
 # Create sync engine
 from sqlalchemy import create_engine
