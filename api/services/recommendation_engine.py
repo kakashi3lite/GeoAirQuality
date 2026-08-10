@@ -53,45 +53,71 @@ class RecommendationEngine:
         snapshot: EnvironmentalSnapshot,
         news_events: Optional[List[Dict[str, Any]]] = None,
         route_risk: Optional[Dict[str, Any]] = None,
+        data_status: str = "available",
     ) -> List[Dict[str, str]]:
         """Build the ordered recommendation list for a patient."""
         recommendations: List[Dict[str, str]] = []
         score = assessment["safety_score"]
         label = self._condition_label()
 
-        # --- Base guidance by risk level -------------------------------
-        if score >= 80:
+        # --- Data availability honesty --------------------------------
+        # Never imply "safe" when we have no data to back it up. With no
+        # readings the score defaults to neutral (100), so we must suppress
+        # the favorable guidance and replace it with a caution.
+        if data_status == "unavailable":
             recommendations.append({
                 "type": "general",
                 "text": (
-                    f"Conditions are favorable for {label}. "
-                    f"Enjoy your outdoor activities."
+                    "No recent monitoring data is available for your area. "
+                    "Use caution, check official local guidance, and rely on "
+                    "visible conditions (smoke, haze, odor)."
                 ),
             })
-        elif score >= 60:
+        elif data_status == "partial":
             recommendations.append({
-                "type": "precaution",
+                "type": "general",
                 "text": (
-                    f"Limit prolonged outdoor exertion. Keep your rescue "
-                    f"medication accessible if you step outside."
+                    "Monitoring coverage in your area is partial — some "
+                    "pollutant readings are missing, so this estimate is "
+                    "less precise than usual."
                 ),
             })
-        elif score >= 40:
-            recommendations.append({
-                "type": "precaution",
-                "text": (
-                    "Avoid strenuous outdoor activity. Consider staying "
-                    "indoors where possible and keep windows closed."
-                ),
-            })
-        else:
-            recommendations.append({
-                "type": "precaution",
-                "text": (
-                    "Stay indoors with windows closed. Use air purification "
-                    "if available. Avoid outdoor activity entirely."
-                ),
-            })
+
+        # --- Base guidance by risk level -------------------------------
+        # (skipped entirely when no data is available — see above)
+        if data_status != "unavailable":
+            if score >= 80:
+                recommendations.append({
+                    "type": "general",
+                    "text": (
+                        f"Conditions are favorable for {label}. "
+                        f"Enjoy your outdoor activities."
+                    ),
+                })
+            elif score >= 60:
+                recommendations.append({
+                    "type": "precaution",
+                    "text": (
+                        f"Limit prolonged outdoor exertion. Keep your rescue "
+                        f"medication accessible if you step outside."
+                    ),
+                })
+            elif score >= 40:
+                recommendations.append({
+                    "type": "precaution",
+                    "text": (
+                        "Avoid strenuous outdoor activity. Consider staying "
+                        "indoors where possible and keep windows closed."
+                    ),
+                })
+            else:
+                recommendations.append({
+                    "type": "precaution",
+                    "text": (
+                        "Stay indoors with windows closed. Use air purification "
+                        "if available. Avoid outdoor activity entirely."
+                    ),
+                })
 
         # --- Pollutant-specific guidance ------------------------------
         if snapshot.pm25 is not None and snapshot.pm25 > self.thresholds.pm25:

@@ -133,6 +133,21 @@ def make_weather_row(**overrides):
     return type("WeatherRow", (), defaults)()
 
 
+def make_aq_row(**overrides):
+    """Fake AirQualityReading with the attributes the snapshot builder reads."""
+    defaults = dict(
+        aqi=140,
+        no2_gt=40.0,
+        pt08_s5_o3=85.0,
+        temperature=28.0,
+        relative_humidity=88.0,
+        timestamp=datetime.utcnow(),
+        grid_cell_id=123,
+    )
+    defaults.update(overrides)
+    return type("AQRow", (), defaults)()
+
+
 @pytest.fixture(autouse=True)
 def reset_app_state():
     """Reset module-level mocks and metrics between tests."""
@@ -178,6 +193,7 @@ def test_auto_registers_patient_and_returns_assessment():
     assert 0 <= body["safety_score"] <= 100
     assert body["risk_level"] in ("low", "moderate", "high", "very_high")
     assert body["summary"]
+    assert body["data_status"] in ("available", "partial", "unavailable")
     assert body["component_scores"]
     assert body["contributions"]
     assert isinstance(body["recommendations"], list)
@@ -253,6 +269,44 @@ def test_validation_error_on_bad_coordinates():
         params={"lat": 91.0, "lon": -74.0060},
     )
     assert resp.status_code == 422
+
+
+def test_data_status_partial_when_weather_only():
+    session = FakeSession(weather_rows=[make_weather_row()])
+    client = _client(session)
+    body = client.get(
+        "/api/v1/patients/erin/safety-assessment",
+        params={"lat": 40.7128, "lon": -74.0060},
+    ).json()
+    assert body["data_status"] == "partial"
+    assert any("partial" in r["text"].lower() for r in body["recommendations"])
+
+
+def test_data_status_available_with_both_sources():
+    session = FakeSession(
+        weather_rows=[make_weather_row()],
+        aq_rows=[make_aq_row()],
+    )
+    client = _client(session)
+    body = client.get(
+        "/api/v1/patients/frank/safety-assessment",
+        params={"lat": 40.7128, "lon": -74.0060},
+    ).json()
+    assert body["data_status"] == "available"
+    assert body["current_conditions"]["aq_reading_count"] == 1
+
+
+def test_data_status_unavailable_with_caution():
+    session = FakeSession()  # no weather, no aq readings
+    client = _client(session)
+    body = client.get(
+        "/api/v1/patients/grace/safety-assessment",
+        params={"lat": 40.7128, "lon": -74.0060},
+    ).json()
+    assert body["data_status"] == "unavailable"
+    texts = " ".join(r["text"].lower() for r in body["recommendations"])
+    assert "no recent monitoring data" in texts
+    assert "favorable" not in texts  # must NOT claim safe without data
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ from services.safety_engine import (
     EnvironmentalSnapshot,
     RiskScorer,
     risk_level_from_score,
+    data_status_from_snapshot,
     WEIGHT_AQI,
     WEIGHT_WEATHER,
     WEIGHT_NEWS,
@@ -59,6 +60,7 @@ def clean_snapshot(**overrides):
         wind_direction="SW",
         source_timestamp=datetime.utcnow(),
         reading_count=10,
+        aq_reading_count=10,
     )
     defaults.update(overrides)
     return EnvironmentalSnapshot(**defaults)
@@ -285,6 +287,38 @@ def test_recommendation_very_high_stay_indoors():
     recs = engine.generate(assessment, snapshot)
     texts = " ".join(r["text"].lower() for r in recs)
     assert "stay indoors" in texts
+
+
+# ----------------------------------------------------------------------
+# Data availability honesty
+# ----------------------------------------------------------------------
+def test_data_status_helper():
+    assert data_status_from_snapshot(clean_snapshot()) == "available"
+    assert data_status_from_snapshot(clean_snapshot(aq_reading_count=0)) == "partial"
+    assert data_status_from_snapshot(EnvironmentalSnapshot()) == "unavailable"
+
+
+def test_recommendation_unavailable_data_caution():
+    context = make_context(conditions=("asthma",))
+    scorer = RiskScorer(context)
+    engine = RecommendationEngine(context)
+    snapshot = EnvironmentalSnapshot()  # no data at all
+    assessment = scorer.assess(snapshot)
+    # Engine must NOT claim it is safe when there is no data
+    recs = engine.generate(assessment, snapshot, data_status="unavailable")
+    texts = " ".join(r["text"].lower() for r in recs)
+    assert "no recent monitoring data" in texts
+    assert "favorable" not in texts
+
+
+def test_recommendation_partial_data_note():
+    context = make_context(conditions=("asthma",))
+    engine = RecommendationEngine(context)
+    snapshot = clean_snapshot(aq_reading_count=0)
+    assessment = RiskScorer(context).assess(snapshot)
+    recs = engine.generate(assessment, snapshot, data_status="partial")
+    texts = " ".join(r["text"].lower() for r in recs)
+    assert "partial" in texts
 
 
 if __name__ == "__main__":

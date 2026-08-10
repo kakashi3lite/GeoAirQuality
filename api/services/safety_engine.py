@@ -150,8 +150,22 @@ class EnvironmentalSnapshot:
     wind_speed: Optional[float] = None
     wind_direction: Optional[str] = None
     source_timestamp: Optional[datetime] = None
-    reading_count: int = 0
+    reading_count: int = 0          # weather readings found
+    aq_reading_count: int = 0       # air-quality readings found
     grid_id: Optional[str] = None
+
+
+def data_status_from_snapshot(snapshot: "EnvironmentalSnapshot") -> str:
+    """Classify data availability: 'available' / 'partial' / 'unavailable'.
+
+    Honest data reporting matters for health guidance: with no readings in
+    range we cannot claim conditions are safe, so the API must say so.
+    """
+    if snapshot.reading_count > 0 and snapshot.aq_reading_count > 0:
+        return "available"
+    if snapshot.reading_count > 0 or snapshot.aq_reading_count > 0:
+        return "partial"
+    return "unavailable"
 
 
 def _pollutant_score(value: Optional[float], threshold: float) -> float:

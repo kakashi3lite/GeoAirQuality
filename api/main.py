@@ -5,6 +5,7 @@ Main application entry point with spatial air quality API endpoints.
 
 import logging
 import json
+import asyncio
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -16,8 +17,10 @@ from pydantic import BaseModel, Field
 from prometheus_client import Counter, Gauge
 from sqlalchemy import create_engine, text, select, func
 from sqlalchemy.orm import sessionmaker, Session
-from geoalchemy2 import Geometry
-from geoalchemy2.functions import ST_DWithin, ST_Point, ST_Distance
+from geoalchemy2 import Geometry, Geography
+from geoalchemy2.functions import (
+    ST_DWithin, ST_Point, ST_Distance, ST_SetSRID, ST_MakePoint
+)
 
 from models import (
     SpatialGrid, AirQualityReading, WeatherReading,
@@ -25,7 +28,8 @@ from models import (
 )
 from cache import get_cache, cached, cache_health_status, CacheSettings
 from services.safety_engine import (
-    PatientContext, RiskScorer, EnvironmentalSnapshot, RiskLevel
+    PatientContext, RiskScorer, EnvironmentalSnapshot, RiskLevel,
+    data_status_from_snapshot,
 )
 from services.recommendation_engine import RecommendationEngine
 
@@ -195,6 +199,7 @@ class SafetyAssessmentResponse(BaseModel):
     safety_score: int = Field(..., ge=0, le=100)
     risk_level: str
     summary: str
+    data_status: str
     component_scores: Dict[str, float]
     contributions: Dict[str, int]
     contributing_factors: List[Dict[str, Any]]
@@ -259,15 +264,17 @@ async def get_air_quality_readings(
         # Calculate time threshold
         time_threshold = datetime.utcnow() - timedelta(hours=hours)
         
-        # Create point geometry
-        point = ST_Point(lon, lat)
+        # Create geography-cast point so ST_DWithin measures METERS
+        # (spherical), not degrees — the geometry column is SRID 4326.
+        point = ST_SetSRID(ST_MakePoint(lon, lat), 4326)
+        geo_point = point.cast(Geography(srid=4326))
         
         # Query air quality readings
         query = select(AirQualityReading).where(
             ST_DWithin(
-                AirQualityReading.location,
-                point,
-                radius_km * 1000  # Convert km to meters
+                AirQualityReading.location.cast(Geography(srid=4326)),
+                geo_point,
+                radius_km * 1000  # meters (spherical)
             ),
             AirQualityReading.timestamp >= time_threshold
         ).order_by(
@@ -292,14 +299,15 @@ async def get_air_quality_readings(
                 id=reading.id,
                 location={"latitude": coords.lat, "longitude": coords.lon},
                 timestamp=reading.timestamp,
-                pm25=reading.pm25,
-                pm10=reading.pm10,
-                no2=reading.no2,
-                o3=reading.o3,
-                co=reading.co,
-                so2=reading.so2,
+                # The raw-sensor model does not measure PM2.5/PM10/SO2
+                pm25=reading.pm25 if hasattr(reading, 'pm25') else None,
+                pm10=reading.pm10 if hasattr(reading, 'pm10') else None,
+                no2=reading.no2_gt,
+                o3=reading.pt08_s5_o3,
+                co=reading.co_gt,
+                so2=None,
                 aqi=reading.aqi,
-                grid_id=reading.grid_id
+                grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None
             ))
         
         return response_data
@@ -320,8 +328,10 @@ async def get_grid_air_quality(
     try:
         time_threshold = datetime.utcnow() - timedelta(hours=hours)
         
+        # Resolve the readable grid identifier to its numeric FK
+        grid_ids = select(SpatialGrid.id).where(SpatialGrid.grid_id == grid_id)
         query = select(AirQualityReading).where(
-            AirQualityReading.grid_id == grid_id,
+            AirQualityReading.grid_cell_id.in_(grid_ids),
             AirQualityReading.timestamp >= time_threshold
         ).order_by(AirQualityReading.timestamp.desc())
         
@@ -348,7 +358,7 @@ async def get_grid_air_quality(
                 co=reading.co,
                 so2=reading.so2,
                 aqi=reading.aqi,
-                grid_id=reading.grid_id
+                grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None
             ))
         
         return response_data
@@ -372,13 +382,14 @@ async def get_weather_readings(
     """Get weather readings within radius of a location."""
     try:
         time_threshold = datetime.utcnow() - timedelta(hours=hours)
-        point = ST_Point(lon, lat)
+        point = ST_SetSRID(ST_MakePoint(lon, lat), 4326)
+        geo_point = point.cast(Geography(srid=4326))
         
         query = select(WeatherReading).where(
             ST_DWithin(
-                WeatherReading.location,
-                point,
-                radius_km * 1000
+                WeatherReading.location.cast(Geography(srid=4326)),
+                geo_point,
+                radius_km * 1000  # meters (spherical)
             ),
             WeatherReading.timestamp >= time_threshold
         ).order_by(
@@ -401,13 +412,13 @@ async def get_weather_readings(
                 id=reading.id,
                 location={"latitude": coords.lat, "longitude": coords.lon},
                 timestamp=reading.timestamp,
-                temperature=reading.temperature,
+                temperature=reading.temperature_celsius,
                 humidity=reading.humidity,
-                pressure=reading.pressure,
-                wind_speed=reading.wind_speed,
+                pressure=reading.pressure_mb,
+                wind_speed=reading.wind_kph,
                 wind_direction=reading.wind_direction,
-                precipitation=reading.precipitation,
-                grid_id=reading.grid_id
+                precipitation=None,
+                grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None
             ))
         
         return response_data
@@ -430,8 +441,10 @@ async def get_aggregated_data(
     try:
         time_threshold = datetime.utcnow() - timedelta(days=days)
         
+        # Resolve the readable grid identifier to its numeric FK
+        grid_ids = select(SpatialGrid.id).where(SpatialGrid.grid_id == grid_id)
         query = select(AggregatedData).where(
-            AggregatedData.grid_id == grid_id,
+            AggregatedData.grid_cell_id.in_(grid_ids),
             AggregatedData.aggregation_level == level,
             AggregatedData.time_bucket >= time_threshold
         ).order_by(AggregatedData.time_bucket.desc())
@@ -441,15 +454,15 @@ async def get_aggregated_data(
         
         return [
             AggregatedResponse(
-                grid_id=agg.grid_id,
+                grid_id=str(agg.grid_cell_id) if agg.grid_cell_id else None,
                 time_bucket=agg.time_bucket,
                 aggregation_level=agg.aggregation_level,
-                avg_pm25=agg.avg_pm25,
+                avg_pm25=agg.avg_pm2_5,
                 max_pm25=agg.max_pm25,
                 min_pm25=agg.min_pm25,
                 avg_aqi=agg.avg_aqi,
                 max_aqi=agg.max_aqi,
-                reading_count=agg.reading_count,
+                reading_count=agg.data_points_count,
                 avg_temperature=agg.avg_temperature,
                 avg_humidity=agg.avg_humidity
             )
@@ -487,15 +500,27 @@ def _build_environmental_snapshot(
     hours: int = 24,
     limit: int = 5,
 ) -> EnvironmentalSnapshot:
-    """Build a snapshot from the most recent weather + AQ readings."""
+    """Build a snapshot from the most recent weather + AQ readings.
+
+    Uses geography-cast ST_DWithin so the radius is measured in METERS
+    (spherical), not degrees. The raw geometry column is SRID 4326 where
+    ST_DWithin would interpret the distance as degrees — a whole-planet
+    search for a 25km radius. The migration 003_geography_indexes adds
+    GiST expression indexes on (location::geography) so this stays fast.
+    """
     time_threshold = datetime.utcnow() - timedelta(hours=hours)
-    point = ST_Point(lon, lat)
+    point = ST_SetSRID(ST_MakePoint(lon, lat), 4326)
+    geo_point = point.cast(Geography(srid=4326))
     radius_m = radius_km * 1000
     snapshot = EnvironmentalSnapshot()
 
     weather_rows = db.execute(
         select(WeatherReading).where(
-            ST_DWithin(WeatherReading.location, point, radius_m),
+            ST_DWithin(
+                WeatherReading.location.cast(Geography(srid=4326)),
+                geo_point,
+                radius_m,
+            ),
             WeatherReading.timestamp >= time_threshold,
         ).order_by(WeatherReading.timestamp.desc()).limit(limit)
     ).scalars().all()
@@ -519,13 +544,18 @@ def _build_environmental_snapshot(
     # Augment / fall back using air quality readings
     aq_rows = db.execute(
         select(AirQualityReading).where(
-            ST_DWithin(AirQualityReading.location, point, radius_m),
+            ST_DWithin(
+                AirQualityReading.location.cast(Geography(srid=4326)),
+                geo_point,
+                radius_m,
+            ),
             AirQualityReading.timestamp >= time_threshold,
         ).order_by(AirQualityReading.timestamp.desc()).limit(limit)
     ).scalars().all()
 
     if aq_rows:
         a = aq_rows[0]
+        snapshot.aq_reading_count = len(aq_rows)
         snapshot.aqi = snapshot.aqi if snapshot.aqi is not None else a.aqi
         snapshot.temperature = (
             snapshot.temperature if snapshot.temperature is not None else a.temperature
@@ -537,7 +567,6 @@ def _build_environmental_snapshot(
         snapshot.o3 = snapshot.o3 if snapshot.o3 is not None else a.pt08_s5_o3
         if snapshot.reading_count == 0:
             snapshot.source_timestamp = a.timestamp
-            snapshot.reading_count = len(aq_rows)
 
     return snapshot
 
@@ -545,26 +574,32 @@ def _build_environmental_snapshot(
 def _compute_route_risk(
     db: Session,
     context: PatientContext,
-    scorer: RiskScorer,
     lat: float,
     lon: float,
     dest_lat: float,
     dest_lon: float,
 ) -> Dict[str, Any]:
-    """Sample environmental conditions along the origin->destination corridor."""
+    """Sample conditions along the origin->destination corridor.
+
+    Uses a fixed 5km sampling radius per point (not the patient's larger
+    alert radius) so local variation along the route is captured instead
+    of being over-smoothed. Scoring still uses the patient's thresholds.
+    """
     mid_lat = (lat + dest_lat) / 2.0
     mid_lon = (lon + dest_lon) / 2.0
-    radius_km = max(context.alert_radius_km, 5.0)
 
     samples = [
         ("origin", lat, lon),
         ("midpoint", mid_lat, mid_lon),
         ("destination", dest_lat, dest_lon),
     ]
+    scorer = RiskScorer(context)
     segments = []
     scores = []
     for label, slat, slon in samples:
-        snap = _build_environmental_snapshot(db, slat, slon, radius_km, hours=24, limit=3)
+        snap = _build_environmental_snapshot(
+            db, slat, slon, radius_km=5.0, hours=24, limit=3
+        )
         assessment = scorer.assess(snap)
         scores.append(assessment["safety_score"])
         segments.append({
@@ -583,8 +618,13 @@ def _compute_route_risk(
     }
 
 
-def _build_summary(assessment: Dict[str, Any], context: PatientContext) -> str:
+def _build_summary(assessment: Dict[str, Any], context: PatientContext, data_status: str = "available") -> str:
     """One-line plain-language summary of the assessment."""
+    if data_status == "unavailable":
+        return (
+            "Monitoring data is currently unavailable for your area. "
+            "Use caution and check official local guidance before heading out."
+        )
     label = _condition_label(context)
     level = assessment["risk_level"]
     summaries = {
@@ -623,6 +663,14 @@ async def get_patient_safety_assessment(
     events and personal history into a single 0-100 safety score with
     actionable recommendations. The patient profile auto-registers on
     first use.
+
+    Latency strategy:
+      * explicit Redis cache on (user_id, lat, lon, dest) — 5 min TTL
+      * all synchronous DB work runs in a worker thread
+        (asyncio.to_thread) so the event loop stays responsive under
+        concurrent load
+      * spatial radius queries use geography-cast ST_DWithin for
+        meter-accurate results backed by GiST expression indexes
     """
     try:
         # Explicit caching on (user_id, lat, lon, dest) — avoids serializing
@@ -639,26 +687,36 @@ async def get_patient_safety_assessment(
             SAFETY_CACHE_HITS.inc()
             return SafetyAssessmentResponse(**cached_result)
 
-        # Load or auto-register the patient profile
-        profile = db.execute(
-            select(PatientProfile).where(PatientProfile.user_id == user_id)
-        ).scalar_one_or_none()
-        if profile is None:
-            profile = PatientProfile(
-                user_id=user_id,
-                home_lat=lat,
-                home_lon=lon,
-                home_location=f"SRID=4326;POINT({lon} {lat})",
+        # All synchronous DB work runs off the event loop.
+        def _db_work():
+            # Load or auto-register the patient profile
+            profile = db.execute(
+                select(PatientProfile).where(PatientProfile.user_id == user_id)
+            ).scalar_one_or_none()
+            if profile is None:
+                profile = PatientProfile(
+                    user_id=user_id,
+                    home_lat=lat,
+                    home_lon=lon,
+                    home_location=f"SRID=4326;POINT({lon} {lat})",
+                )
+                db.add(profile)
+                db.commit()
+                db.refresh(profile)
+                logger.info(f"Auto-registered patient profile for user_id={user_id}")
+
+            context = PatientContext.from_profile(profile)
+            snapshot = _build_environmental_snapshot(
+                db, lat, lon, context.alert_radius_km
             )
-            db.add(profile)
-            db.commit()
-            db.refresh(profile)
-            logger.info(f"Auto-registered patient profile for user_id={user_id}")
+            route_risk = None
+            if dest_lat is not None and dest_lon is not None:
+                route_risk = _compute_route_risk(
+                    db, context, lat, lon, dest_lat, dest_lon
+                )
+            return context, snapshot, route_risk
 
-        context = PatientContext.from_profile(profile)
-        radius_km = context.alert_radius_km
-
-        snapshot = _build_environmental_snapshot(db, lat, lon, radius_km)
+        context, snapshot, route_risk = await asyncio.to_thread(_db_work)
 
         # Phase 1: news + history inputs are empty; wired in Phases 2 & 3
         news_events: List[Dict[str, Any]] = []
@@ -666,23 +724,19 @@ async def get_patient_safety_assessment(
 
         scorer = RiskScorer(context)
         assessment = scorer.assess(snapshot, news_events, symptoms)
-
-        route_risk = None
-        if dest_lat is not None and dest_lon is not None:
-            route_risk = _compute_route_risk(
-                db, context, scorer, lat, lon, dest_lat, dest_lon
-            )
+        data_status = data_status_from_snapshot(snapshot)
 
         engine = RecommendationEngine(context)
         recommendations = engine.generate(
-            assessment, snapshot, news_events, route_risk
+            assessment, snapshot, news_events, route_risk, data_status
         )
 
         response = SafetyAssessmentResponse(
             user_id=user_id,
             safety_score=assessment["safety_score"],
             risk_level=assessment["risk_level"],
-            summary=_build_summary(assessment, context),
+            summary=_build_summary(assessment, context, data_status),
+            data_status=data_status,
             component_scores=assessment["component_scores"],
             contributions=assessment["contributions"],
             contributing_factors=assessment["contributing_factors"],
@@ -697,6 +751,7 @@ async def get_patient_safety_assessment(
                 "wind_speed": snapshot.wind_speed,
                 "wind_direction": snapshot.wind_direction,
                 "reading_count": snapshot.reading_count,
+                "aq_reading_count": snapshot.aq_reading_count,
                 "source_timestamp": snapshot.source_timestamp,
                 "grid_id": snapshot.grid_id,
             },
@@ -706,11 +761,10 @@ async def get_patient_safety_assessment(
             generated_at=datetime.utcnow(),
         )
 
-        # Version-agnostic serialization (pydantic v1: .json(); v2: model_dump_json)
-        if hasattr(response, "model_dump_json"):
-            serialized = json.loads(response.model_dump_json())
-        else:
-            serialized = json.loads(response.json())
+        # Serialize once via model_dump (cache.set JSON-encodes with
+        # default=str, handling datetimes) — avoids double serialization.
+        serialized = response.model_dump() if hasattr(response, "model_dump") \
+            else json.loads(response.json())
         await cache.set(cache_key, serialized, ttl=300)
         SAFETY_ASSESSMENTS.inc()
         SAFETY_AVG_SCORE.set(response.safety_score)
