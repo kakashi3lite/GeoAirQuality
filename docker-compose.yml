@@ -11,10 +11,13 @@ services:
       POSTGRES_PASSWORD: geoair_pass
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - "5432:5432"
+      - "5433:5432"  # host 5433 avoids clashes with a host-level Postgres on 5432
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./api/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
+    # NOTE: PostGIS extensions are enabled by the image's own init scripts
+    # (10_postgis.sh); custom DB functions come from Alembic migrations.
+    # An earlier `./api/migrations/init.sql` mount pointed at an empty
+    # directory and crashed the container — do not re-add it.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U geoair_user -d geoairquality"]
       interval: 10s
@@ -47,7 +50,9 @@ services:
       dockerfile: Dockerfile
     container_name: geoairquality-api
     environment:
-      DATABASE_URL: postgresql+asyncpg://geoair_user:geoair_pass@postgres:5432/geoairquality
+      # main.py uses a SYNC engine (create_engine + psycopg2, work in
+      # asyncio.to_thread) — asyncpg would crash startup. Keep postgresql://
+      DATABASE_URL: postgresql://geoair_user:geoair_pass@postgres:5432/geoairquality
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: INFO
       ENVIRONMENT: development

@@ -40,8 +40,8 @@ def upgrade() -> None:
         sa.Column('center_lon', sa.Float(), nullable=False),
         sa.Column('geometry', Geometry('POLYGON', srid=4326, spatial_index=True), nullable=False),
         sa.Column('geography', Geography('POLYGON', srid=4326, spatial_index=True), nullable=False),
-        sa.Column('created_at', sa.DateTime(), nullable=False, default=datetime.datetime.utcnow),
-        sa.Column('updated_at', sa.DateTime(), default=datetime.datetime.utcnow),
+        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('NOW()')),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('NOW()')),
         sa.CheckConstraint('resolution > 0', name='positive_resolution'),
         sa.CheckConstraint('center_lat >= -90 AND center_lat <= 90', name='valid_latitude'),
         sa.CheckConstraint('center_lon >= -180 AND center_lon <= 180', name='valid_longitude'),
@@ -81,8 +81,8 @@ def upgrade() -> None:
         sa.Column('aqi_category', sa.String(length=20), nullable=True),
         sa.Column('is_validated', sa.Boolean(), nullable=True, default=False),
         sa.Column('quality_score', sa.Float(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=False, default=datetime.datetime.utcnow),
-        sa.Column('updated_at', sa.DateTime(), default=datetime.datetime.utcnow),
+        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('NOW()')),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('NOW()')),
         sa.CheckConstraint('latitude >= -90 AND latitude <= 90', name='valid_latitude'),
         sa.CheckConstraint('longitude >= -180 AND longitude <= 180', name='valid_longitude'),
         sa.CheckConstraint('relative_humidity >= 0 AND relative_humidity <= 100', name='valid_humidity'),
@@ -104,11 +104,16 @@ def upgrade() -> None:
     op.create_index('idx_aq_grid_time', 'air_quality_readings', ['grid_cell_id', 'timestamp'])
     op.create_index('idx_aq_validated_time', 'air_quality_readings', ['is_validated', 'timestamp'])
     
-    # Create partial index for high-quality recent data
+    # Create partial index for validated readings.
+    # NOTE: index predicates must be IMMUTABLE — an earlier `timestamp >
+    # NOW() - INTERVAL '7 days'` predicate fails on a live Postgres
+    # ("functions in index predicate must be marked IMMUTABLE") because
+    # NOW() is STABLE. The (timestamp, aqi) btree still serves time-range
+    # scans efficiently; filtering on is_validated keeps the index compact.
     op.execute("""
         CREATE INDEX idx_aq_recent_quality 
         ON air_quality_readings (timestamp, aqi) 
-        WHERE is_validated = true AND timestamp > NOW() - INTERVAL '7 days'
+        WHERE is_validated = true
     """)
     
     # Create weather_readings table
@@ -143,8 +148,8 @@ def upgrade() -> None:
         sa.Column('aqi_category', sa.String(length=20), nullable=True),
         sa.Column('is_validated', sa.Boolean(), nullable=True, default=False),
         sa.Column('quality_score', sa.Float(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=False, default=datetime.datetime.utcnow),
-        sa.Column('updated_at', sa.DateTime(), default=datetime.datetime.utcnow),
+        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('NOW()')),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('NOW()')),
         sa.CheckConstraint('latitude >= -90 AND latitude <= 90', name='valid_latitude'),
         sa.CheckConstraint('longitude >= -180 AND longitude <= 180', name='valid_longitude'),
         sa.CheckConstraint('humidity >= 0 AND humidity <= 100', name='valid_humidity'),
@@ -189,8 +194,8 @@ def upgrade() -> None:
         sa.Column('avg_wind_speed', sa.Float(), nullable=True),
         sa.Column('data_points_count', sa.Integer(), nullable=False),
         sa.Column('quality_score', sa.Float(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=False, default=datetime.datetime.utcnow),
-        sa.Column('updated_at', sa.DateTime(), default=datetime.datetime.utcnow),
+        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('NOW()')),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('NOW()')),
         sa.CheckConstraint('data_points_count > 0', name='positive_data_points'),
         sa.CheckConstraint("aggregation_level IN ('hour', 'day', 'month')", name='valid_aggregation_level'),
         sa.ForeignKeyConstraint(['grid_cell_id'], ['spatial_grids.id']),
@@ -220,8 +225,8 @@ def upgrade() -> None:
         sa.Column('total_records_ingested', sa.Integer(), nullable=True, default=0),
         sa.Column('failed_ingestions', sa.Integer(), nullable=True, default=0),
         sa.Column('average_quality_score', sa.Float(), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=False, default=datetime.datetime.utcnow),
-        sa.Column('updated_at', sa.DateTime(), default=datetime.datetime.utcnow),
+        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('NOW()')),
+        sa.Column('updated_at', sa.DateTime(), server_default=sa.text('NOW()')),
         sa.CheckConstraint('total_records_ingested >= 0', name='positive_records'),
         sa.CheckConstraint('failed_ingestions >= 0', name='positive_failures'),
         sa.PrimaryKeyConstraint('id'),
@@ -416,8 +421,7 @@ def create_initial_spatial_grids():
                 (lon + 0.5) || ' ' || (lat - 0.5) || ',' ||
                 (lon + 0.5) || ' ' || (lat + 0.5) || ',' ||
                 (lon - 0.5) || ' ' || (lat + 0.5) || ',' ||
-                (lon - 0.5) || ' ' || (lat - 0.5) || '))', 
-                4326
+                (lon - 0.5) || ' ' || (lat - 0.5) || '))'
             ) as geography
         FROM generate_series(-89, 89, 1) as lat,
              generate_series(-179, 179, 1) as lon;
@@ -446,8 +450,7 @@ def create_initial_spatial_grids():
                 (ROUND(lon::numeric, 1) + 0.05) || ' ' || (ROUND(lat::numeric, 1) - 0.05) || ',' ||
                 (ROUND(lon::numeric, 1) + 0.05) || ' ' || (ROUND(lat::numeric, 1) + 0.05) || ',' ||
                 (ROUND(lon::numeric, 1) - 0.05) || ' ' || (ROUND(lat::numeric, 1) + 0.05) || ',' ||
-                (ROUND(lon::numeric, 1) - 0.05) || ' ' || (ROUND(lat::numeric, 1) - 0.05) || '))', 
-                4326
+                (ROUND(lon::numeric, 1) - 0.05) || ' ' || (ROUND(lat::numeric, 1) - 0.05) || '))'
             ) as geography
         FROM generate_series(35.0, 45.0, 0.1) as lat,
              generate_series(-125.0, -65.0, 0.1) as lon

@@ -159,6 +159,12 @@ class FakeCache:
         self.store[key] = value
         return True
 
+    async def set_if_absent(self, key, value="1", ttl=None):
+        if key in self.store:
+            return False
+        self.store[key] = value
+        return True
+
     async def delete(self, key):
         self.store.pop(key, None)
         return True
@@ -499,6 +505,59 @@ def test_scheduler_tick_noop_without_keys():
             await NewsScheduler(interval_minutes=5).tick()
 
     asyncio.run(run())  # must not raise
+
+
+def test_scheduler_lock_single_flight_across_ticks():
+    """A second tick while the lock is held must not fetch again."""
+    cache = FakeCache()
+
+    class _CountingAggregator:
+        def __init__(self):
+            self.calls = 0
+
+        async def fetch_all(self):
+            self.calls += 1
+            return []
+
+    agg = _CountingAggregator()
+    scheduler = NewsScheduler(interval_minutes=5)
+    scheduler.aggregator = agg
+
+    async def run():
+        with patch.object(scheduler_mod, "get_cache", lambda: _async(cache)):
+            await scheduler.tick()  # acquires lock, releases in finally
+            # Lock is gone after a completed cycle -> next cycle runs
+            assert not cache.store.get("news_fetch_lock")
+            await scheduler.tick()
+        assert agg.calls == 2
+
+    asyncio.run(run())
+
+
+def test_scheduler_lock_held_skips_fetch():
+    """While another replica holds the lock, tick() is a no-op."""
+    cache = FakeCache()
+
+    class _CountingAggregator:
+        def __init__(self):
+            self.calls = 0
+
+        async def fetch_all(self):
+            self.calls += 1
+            return []
+
+    agg = _CountingAggregator()
+    scheduler = NewsScheduler(interval_minutes=5)
+    scheduler.aggregator = agg
+
+    async def run():
+        # Simulate another replica holding the lock
+        cache.store["news_fetch_lock"] = "1"
+        with patch.object(scheduler_mod, "get_cache", lambda: _async(cache)):
+            await scheduler.tick()
+        assert agg.calls == 0  # fetch must be skipped
+
+    asyncio.run(run())
 
 
 # ==========================================================================

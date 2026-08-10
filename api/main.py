@@ -7,6 +7,7 @@ import logging
 import json
 import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -96,6 +97,7 @@ engine = create_engine(
     max_overflow=30,
     pool_pre_ping=True,
     pool_recycle=3600,
+    pool_timeout=10,
 )
 
 # Create session factory
@@ -107,6 +109,18 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
     logger.info("Starting GeoAirQuality API")
+
+    # Bounded default executor for asyncio.to_thread DB work. The default
+    # executor is min(32, cpu+4) threads — sized up here so 30+ concurrent
+    # spatial queries don't queue behind a tiny pool. Capped by the DB
+    # connection pool (pool_size + max_overflow = 50) anyway.
+    executor = ThreadPoolExecutor(
+        max_workers=64, thread_name_prefix="db-worker"
+    )
+    try:
+        asyncio.get_running_loop().set_default_executor(executor)
+    except RuntimeError:
+        logger.warning("Could not attach custom executor to the event loop")
 
     # Initialize database
     try:
@@ -138,6 +152,9 @@ async def lifespan(app: FastAPI):
         await scheduler_task
     except (asyncio.CancelledError, Exception):
         pass
+
+    # Release the executor's threads
+    executor.shutdown(wait=False, cancel_futures=True)
 
     # Close cache connections
     try:
@@ -193,7 +210,7 @@ class AirQualityResponse(BaseModel):
     o3: Optional[float]
     co: Optional[float]
     so2: Optional[float]
-    aqi: Optional[int]
+    aqi: Optional[float]  # DB column is Float; AQI can be fractional
     grid_id: Optional[str]
 
 
@@ -217,8 +234,8 @@ class AggregatedResponse(BaseModel):
     avg_pm25: Optional[float]
     max_pm25: Optional[float]
     min_pm25: Optional[float]
-    avg_aqi: Optional[int]
-    max_aqi: Optional[int]
+    avg_aqi: Optional[float]
+    max_aqi: Optional[float]
     reading_count: int
     avg_temperature: Optional[float]
     avg_humidity: Optional[float]
@@ -303,15 +320,25 @@ class InsightsResponse(BaseModel):
 # Health check endpoints
 @app.get("/health", response_model=HealthResponse)
 async def health_check(db: Session = Depends(get_db)):
-    """Comprehensive health check."""
-    try:
-        # Test database connection
-        result = db.execute(text("SELECT 1"))
-        db_healthy = result.scalar() == 1
+    """Comprehensive health check.
 
-        # Test PostGIS extension
-        postgis_result = db.execute(text("SELECT PostGIS_Version()"))
-        postgis_version = postgis_result.scalar()
+    All synchronous DB work runs in a worker thread (asyncio.to_thread).
+    A health endpoint that blocks the event loop under connection-pool
+    contention would starve every other request — exactly when the
+    orchestrator needs it most.
+    """
+    try:
+        def _db_work():
+            # Test database connection
+            result = db.execute(text("SELECT 1"))
+            db_healthy = result.scalar() == 1
+
+            # Test PostGIS extension
+            postgis_result = db.execute(text("SELECT PostGIS_Version()"))
+            postgis_version = postgis_result.scalar()
+            return db_healthy, postgis_version
+
+        db_healthy, postgis_version = await asyncio.to_thread(_db_work)
 
         # Get cache health
         cache_status = await cache_health_status()
@@ -353,61 +380,63 @@ async def get_air_quality_readings(
 ):
     """Get air quality readings within radius of a location."""
     try:
-        # Calculate time threshold
-        time_threshold = datetime.utcnow() - timedelta(hours=hours)
+        def _db_work():
+            # Calculate time threshold
+            time_threshold = datetime.utcnow() - timedelta(hours=hours)
 
-        # Create geography-cast point so ST_DWithin measures METERS
-        # (spherical), not degrees — the geometry column is SRID 4326.
-        point = ST_SetSRID(ST_MakePoint(lon, lat), 4326)
-        geo_point = point.cast(Geography(srid=4326))
+            # Create geography-cast point so ST_DWithin measures METERS
+            # (spherical), not degrees — the geometry column is SRID 4326.
+            point = ST_SetSRID(ST_MakePoint(lon, lat), 4326)
+            geo_point = point.cast(Geography(srid=4326))
 
-        # Query air quality readings
-        query = (
-            select(AirQualityReading)
-            .where(
-                ST_DWithin(
-                    AirQualityReading.location.cast(Geography(srid=4326)),
-                    geo_point,
-                    radius_km * 1000,  # meters (spherical)
-                ),
-                AirQualityReading.timestamp >= time_threshold,
-            )
-            .order_by(AirQualityReading.timestamp.desc())
-            .limit(limit)
-        )
-
-        result = db.execute(query)
-        readings = result.scalars().all()
-
-        # Convert to response format
-        response_data = []
-        for reading in readings:
-            # Extract coordinates from geometry
-            coords_result = db.execute(
-                text("SELECT ST_X(:geom) as lon, ST_Y(:geom) as lat").bindparam(
-                    geom=reading.location
+            # Query air quality readings — select ST_X/ST_Y inline to avoid
+            # an N+1 round-trip per row (and the SQLAlchemy 1.x
+            # text().bindparam() call that only errors once rows exist).
+            query = (
+                select(
+                    AirQualityReading,
+                    func.ST_X(AirQualityReading.location).label("lon"),
+                    func.ST_Y(AirQualityReading.location).label("lat"),
                 )
-            )
-            coords = coords_result.first()
-
-            response_data.append(
-                AirQualityResponse(
-                    id=reading.id,
-                    location={"latitude": coords.lat, "longitude": coords.lon},
-                    timestamp=reading.timestamp,
-                    # The raw-sensor model does not measure PM2.5/PM10/SO2
-                    pm25=reading.pm25 if hasattr(reading, "pm25") else None,
-                    pm10=reading.pm10 if hasattr(reading, "pm10") else None,
-                    no2=reading.no2_gt,
-                    o3=reading.pt08_s5_o3,
-                    co=reading.co_gt,
-                    so2=None,
-                    aqi=reading.aqi,
-                    grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None,
+                .where(
+                    ST_DWithin(
+                        AirQualityReading.location.cast(Geography(srid=4326)),
+                        geo_point,
+                        radius_km * 1000,  # meters (spherical)
+                    ),
+                    AirQualityReading.timestamp >= time_threshold,
                 )
+                .order_by(AirQualityReading.timestamp.desc())
+                .limit(limit)
             )
 
-        return response_data
+            rows = db.execute(query).all()
+
+            # Convert to response format
+            response_data = []
+            for reading, rlon, rlat in rows:
+                response_data.append(
+                    AirQualityResponse(
+                        id=reading.id,
+                        location={"latitude": rlat, "longitude": rlon},
+                        timestamp=reading.timestamp,
+                        # The raw-sensor model does not measure PM2.5/PM10/SO2
+                        pm25=reading.pm25 if hasattr(reading, "pm25") else None,
+                        pm10=reading.pm10 if hasattr(reading, "pm10") else None,
+                        no2=reading.no2_gt,
+                        o3=reading.pt08_s5_o3,
+                        co=reading.co_gt,
+                        so2=None,
+                        aqi=reading.aqi,
+                        grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None,
+                    )
+                )
+
+            return response_data
+
+        # Sync DB work runs off the event loop (asyncio.to_thread) so the
+        # loop stays responsive under concurrent load.
+        return await asyncio.to_thread(_db_work)
 
     except Exception as e:
         logger.error(f"Error fetching air quality readings: {e}")
@@ -423,48 +452,49 @@ async def get_grid_air_quality(
 ):
     """Get air quality readings for a specific grid cell."""
     try:
-        time_threshold = datetime.utcnow() - timedelta(hours=hours)
+        def _db_work():
+            time_threshold = datetime.utcnow() - timedelta(hours=hours)
 
-        # Resolve the readable grid identifier to its numeric FK
-        grid_ids = select(SpatialGrid.id).where(SpatialGrid.grid_id == grid_id)
-        query = (
-            select(AirQualityReading)
-            .where(
-                AirQualityReading.grid_cell_id.in_(grid_ids),
-                AirQualityReading.timestamp >= time_threshold,
-            )
-            .order_by(AirQualityReading.timestamp.desc())
-        )
-
-        result = db.execute(query)
-        readings = result.scalars().all()
-
-        response_data = []
-        for reading in readings:
-            coords_result = db.execute(
-                text("SELECT ST_X(:geom) as lon, ST_Y(:geom) as lat").bindparam(
-                    geom=reading.location
+            # Resolve the readable grid identifier to its numeric FK
+            grid_ids = select(SpatialGrid.id).where(SpatialGrid.grid_id == grid_id)
+            query = (
+                select(
+                    AirQualityReading,
+                    func.ST_X(AirQualityReading.location).label("lon"),
+                    func.ST_Y(AirQualityReading.location).label("lat"),
                 )
-            )
-            coords = coords_result.first()
-
-            response_data.append(
-                AirQualityResponse(
-                    id=reading.id,
-                    location={"latitude": coords.lat, "longitude": coords.lon},
-                    timestamp=reading.timestamp,
-                    pm25=reading.pm25,
-                    pm10=reading.pm10,
-                    no2=reading.no2,
-                    o3=reading.o3,
-                    co=reading.co,
-                    so2=reading.so2,
-                    aqi=reading.aqi,
-                    grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None,
+                .where(
+                    AirQualityReading.grid_cell_id.in_(grid_ids),
+                    AirQualityReading.timestamp >= time_threshold,
                 )
+                .order_by(AirQualityReading.timestamp.desc())
             )
 
-        return response_data
+            rows = db.execute(query).all()
+
+            response_data = []
+            for reading, rlon, rlat in rows:
+                response_data.append(
+                    AirQualityResponse(
+                        id=reading.id,
+                        location={"latitude": rlat, "longitude": rlon},
+                        timestamp=reading.timestamp,
+                        # The raw-sensor model does not measure PM2.5/PM10/SO2
+                        pm25=reading.pm25 if hasattr(reading, "pm25") else None,
+                        pm10=reading.pm10 if hasattr(reading, "pm10") else None,
+                        no2=reading.no2_gt,
+                        o3=reading.pt08_s5_o3,
+                        co=reading.co_gt,
+                        so2=None,
+                        aqi=reading.aqi,
+                        grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None,
+                    )
+                )
+
+            return response_data
+
+        # Sync DB work runs off the event loop (asyncio.to_thread).
+        return await asyncio.to_thread(_db_work)
 
     except Exception as e:
         logger.error(f"Error fetching grid air quality: {e}")
@@ -486,52 +516,52 @@ async def get_weather_readings(
 ):
     """Get weather readings within radius of a location."""
     try:
-        time_threshold = datetime.utcnow() - timedelta(hours=hours)
-        point = ST_SetSRID(ST_MakePoint(lon, lat), 4326)
-        geo_point = point.cast(Geography(srid=4326))
+        def _db_work():
+            time_threshold = datetime.utcnow() - timedelta(hours=hours)
+            point = ST_SetSRID(ST_MakePoint(lon, lat), 4326)
+            geo_point = point.cast(Geography(srid=4326))
 
-        query = (
-            select(WeatherReading)
-            .where(
-                ST_DWithin(
-                    WeatherReading.location.cast(Geography(srid=4326)),
-                    geo_point,
-                    radius_km * 1000,  # meters (spherical)
-                ),
-                WeatherReading.timestamp >= time_threshold,
-            )
-            .order_by(WeatherReading.timestamp.desc())
-            .limit(limit)
-        )
-
-        result = db.execute(query)
-        readings = result.scalars().all()
-
-        response_data = []
-        for reading in readings:
-            coords_result = db.execute(
-                text("SELECT ST_X(:geom) as lon, ST_Y(:geom) as lat").bindparam(
-                    geom=reading.location
+            query = (
+                select(
+                    WeatherReading,
+                    func.ST_X(WeatherReading.location).label("lon"),
+                    func.ST_Y(WeatherReading.location).label("lat"),
                 )
-            )
-            coords = coords_result.first()
-
-            response_data.append(
-                WeatherResponse(
-                    id=reading.id,
-                    location={"latitude": coords.lat, "longitude": coords.lon},
-                    timestamp=reading.timestamp,
-                    temperature=reading.temperature_celsius,
-                    humidity=reading.humidity,
-                    pressure=reading.pressure_mb,
-                    wind_speed=reading.wind_kph,
-                    wind_direction=reading.wind_direction,
-                    precipitation=None,
-                    grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None,
+                .where(
+                    ST_DWithin(
+                        WeatherReading.location.cast(Geography(srid=4326)),
+                        geo_point,
+                        radius_km * 1000,  # meters (spherical)
+                    ),
+                    WeatherReading.timestamp >= time_threshold,
                 )
+                .order_by(WeatherReading.timestamp.desc())
+                .limit(limit)
             )
 
-        return response_data
+            rows = db.execute(query).all()
+
+            response_data = []
+            for reading, rlon, rlat in rows:
+                response_data.append(
+                    WeatherResponse(
+                        id=reading.id,
+                        location={"latitude": rlat, "longitude": rlon},
+                        timestamp=reading.timestamp,
+                        temperature=reading.temperature_celsius,
+                        humidity=reading.humidity,
+                        pressure=reading.pressure_mb,
+                        wind_speed=reading.wind_kph,
+                        wind_direction=reading.wind_direction,
+                        precipitation=None,
+                        grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None,
+                    )
+                )
+
+            return response_data
+
+        # Sync DB work runs off the event loop (asyncio.to_thread).
+        return await asyncio.to_thread(_db_work)
 
     except Exception as e:
         logger.error(f"Error fetching weather readings: {e}")
@@ -544,46 +574,51 @@ async def get_weather_readings(
 async def get_aggregated_data(
     grid_id: str = Path(..., description="Grid cell identifier"),
     level: str = Query(
-        "hourly", regex="^(hourly|daily|weekly)$", description="Aggregation level"
+        "hourly", pattern="^(hourly|daily|weekly)$", description="Aggregation level"
     ),
     days: int = Query(7, ge=1, le=30, description="Days of data to retrieve"),
     db: Session = Depends(get_db),
 ):
     """Get aggregated data for a grid cell."""
     try:
-        time_threshold = datetime.utcnow() - timedelta(days=days)
+        def _db_work():
+            time_threshold = datetime.utcnow() - timedelta(days=days)
 
-        # Resolve the readable grid identifier to its numeric FK
-        grid_ids = select(SpatialGrid.id).where(SpatialGrid.grid_id == grid_id)
-        query = (
-            select(AggregatedData)
-            .where(
-                AggregatedData.grid_cell_id.in_(grid_ids),
-                AggregatedData.aggregation_level == level,
-                AggregatedData.time_bucket >= time_threshold,
+            # Resolve the readable grid identifier to its numeric FK
+            grid_ids = select(SpatialGrid.id).where(SpatialGrid.grid_id == grid_id)
+            query = (
+                select(AggregatedData)
+                .where(
+                    AggregatedData.grid_cell_id.in_(grid_ids),
+                    AggregatedData.aggregation_level == level,
+                    AggregatedData.time_bucket >= time_threshold,
+                )
+                .order_by(AggregatedData.time_bucket.desc())
             )
-            .order_by(AggregatedData.time_bucket.desc())
-        )
 
-        result = db.execute(query)
-        aggregated = result.scalars().all()
+            result = db.execute(query)
+            aggregated = result.scalars().all()
 
-        return [
-            AggregatedResponse(
-                grid_id=str(agg.grid_cell_id) if agg.grid_cell_id else None,
-                time_bucket=agg.time_bucket,
-                aggregation_level=agg.aggregation_level,
-                avg_pm25=agg.avg_pm2_5,
-                max_pm25=agg.max_pm25,
-                min_pm25=agg.min_pm25,
-                avg_aqi=agg.avg_aqi,
-                max_aqi=agg.max_aqi,
-                reading_count=agg.data_points_count,
-                avg_temperature=agg.avg_temperature,
-                avg_humidity=agg.avg_humidity,
-            )
-            for agg in aggregated
-        ]
+            return [
+                AggregatedResponse(
+                    grid_id=str(agg.grid_cell_id) if agg.grid_cell_id else None,
+                    time_bucket=agg.time_bucket,
+                    aggregation_level=agg.aggregation_level,
+                    avg_pm25=agg.avg_pm2_5,
+                    # schema stores no per-bucket max/min PM2.5 — keep honest
+                    max_pm25=None,
+                    min_pm25=None,
+                    avg_aqi=agg.avg_aqi,
+                    max_aqi=agg.max_aqi,
+                    reading_count=agg.data_points_count,
+                    avg_temperature=agg.avg_temperature,
+                    avg_humidity=agg.avg_humidity,
+                )
+                for agg in aggregated
+            ]
+
+        # Sync DB work runs off the event loop (asyncio.to_thread).
+        return await asyncio.to_thread(_db_work)
 
     except Exception as e:
         logger.error(f"Error fetching aggregated data: {e}")

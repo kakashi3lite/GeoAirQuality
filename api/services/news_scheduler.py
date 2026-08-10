@@ -91,12 +91,12 @@ class NewsScheduler:
 
     async def tick(self) -> None:
         """One fetch + store + retention cycle."""
-        # Redis lock to avoid concurrent cycles across replicas
+        # Atomic Redis lock (SET NX EX) so only ONE replica runs a fetch
+        # cycle even when they all wake up at the same moment.
         cache = await get_cache()
-        if await cache.get(_LOCK_KEY):
+        if not await cache.set_if_absent(_LOCK_KEY, "1", ttl=self.interval * 60):
             logger.debug("news fetch already in progress — skipping")
             return
-        await cache.set(_LOCK_KEY, "1", ttl=self.interval * 60)
 
         try:
             raw_items = await self.aggregator.fetch_all()

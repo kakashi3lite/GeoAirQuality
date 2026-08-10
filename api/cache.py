@@ -14,8 +14,39 @@ from datetime import datetime, timedelta
 import redis.asyncio as redis
 from redis.exceptions import RedisError, ConnectionError
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 
 logger = logging.getLogger(__name__)
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively coerce a value into JSON-serializable primitives for cache
+    key generation. Objects that cannot be serialized (SQLAlchemy Sessions,
+    ORM instances, geometry wrappers, ...) collapse to their type name, which
+    is deterministic and keeps the key request-independent.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    return type(value).__name__
+
+
+def _json_default(value: Any) -> Any:
+    """json.dumps default encoder: pydantic models -> dict, datetimes -> ISO,
+    everything else -> str. Lets the @cached decorator round-trip Pydantic
+    response models through Redis as plain JSON (dicts on get), which FastAPI
+    re-validates via response_model.
+    """
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
 class CacheSettings(BaseSettings):
@@ -27,7 +58,9 @@ class CacheSettings(BaseSettings):
     
     # Cache settings
     default_ttl: int = 3600  # 1 hour
-    max_connections: int = 20
+    # Sized to match the DB pool (pool_size 20 + max_overflow 30 = 50) so
+    # high concurrency doesn't queue every cache op behind 20 connections.
+    max_connections: int = 50
     socket_timeout: float = 5.0
     socket_connect_timeout: float = 5.0
     
@@ -36,8 +69,11 @@ class CacheSettings(BaseSettings):
     max_retries: int = 3
     retry_delay: float = 1.0
     
-    class Config:
-        env_prefix = "CACHE_"
+    # Read REDIS_URL directly (pydantic-settings maps redis_url -> REDIS_URL
+    # with an empty prefix). Every config in the repo (docker-compose, k8s
+    # Secrets/ConfigMaps, docs) sets REDIS_URL — a CACHE_ prefix silently
+    # fell back to localhost:6379 and disabled caching in production.
+    model_config = ConfigDict(env_prefix="")
 
 
 class RedisCache:
@@ -118,11 +154,18 @@ class RedisCache:
         return self._healthy
     
     def _generate_key(self, prefix: str, *args, **kwargs) -> str:
-        """Generate cache key from function arguments."""
+        """Generate cache key from function arguments.
+
+        Non-primitive objects (e.g. the per-request DB Session dependency)
+        are collapsed to their type name — the session is not part of the
+        logical cache identity, and serializing it would raise
+        TypeError. Two requests with the same query params but different
+        sessions must share one cache entry.
+        """
         # Create a deterministic hash of arguments
         key_data = {
-            'args': args,
-            'kwargs': sorted(kwargs.items())
+            'args': [_json_safe(a) for a in args],
+            'kwargs': sorted((k, _json_safe(v)) for k, v in kwargs.items())
         }
         key_hash = hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
         return f"{prefix}:{key_hash}"
@@ -137,7 +180,7 @@ class RedisCache:
             if value:
                 return json.loads(value)
             return None
-        except (RedisError, json.JSONDecodeError) as e:
+        except Exception as e:  # noqa: BLE001 - cache must degrade to DB
             logger.warning(f"Cache get failed for key {key}: {e}")
             return None
     
@@ -148,25 +191,29 @@ class RedisCache:
         
         try:
             ttl = ttl or self.settings.default_ttl
-            serialized_value = json.dumps(value, default=str)
+            serialized_value = json.dumps(value, default=_json_default)
             await self.redis_client.setex(key, ttl, serialized_value)
             return True
-        except (RedisError, TypeError) as e:
+        except Exception as e:  # noqa: BLE001 - cache must degrade to DB
             logger.warning(f"Cache set failed for key {key}: {e}")
             return False
-    
-    async def delete(self, key: str) -> bool:
-        """Delete key from cache."""
+
+    async def set_if_absent(self, key: str, value: Any = "1", ttl: Optional[int] = None) -> bool:
+        """Atomically set a key only if it does not exist (SET NX EX).
+
+        Returns True if the key was set (i.e. this caller won the lock).
+        Used for distributed single-flight (news scheduler across replicas).
+        """
         if not await self.health_check():
             return False
-        
+
         try:
-            await self.redis_client.delete(key)
-            return True
-        except RedisError as e:
-            logger.warning(f"Cache delete failed for key {key}: {e}")
+            ttl = ttl or self.settings.default_ttl
+            ok = await self.redis_client.set(key, value, nx=True, ex=ttl)
+            return bool(ok)
+        except Exception as e:  # noqa: BLE001 - cache must degrade to DB
+            logger.warning(f"Cache lock acquire failed for key {key}: {e}")
             return False
-    
     async def delete_pattern(self, pattern: str) -> int:
         """Delete keys matching pattern."""
         if not await self.health_check():
@@ -177,7 +224,7 @@ class RedisCache:
             if keys:
                 return await self.redis_client.delete(*keys)
             return 0
-        except RedisError as e:
+        except Exception as e:  # noqa: BLE001 - cache must degrade to DB
             logger.warning(f"Cache pattern delete failed for pattern {pattern}: {e}")
             return 0
     
@@ -193,7 +240,7 @@ class RedisCache:
                 pipe.expire(key, ttl)
             results = await pipe.execute()
             return results[0]
-        except RedisError as e:
+        except Exception as e:  # noqa: BLE001 - cache must degrade to DB
             logger.warning(f"Cache increment failed for key {key}: {e}")
             return None
     
@@ -214,7 +261,7 @@ class RedisCache:
                 "total_commands_processed": info.get("total_commands_processed", 0),
                 "uptime_in_seconds": info.get("uptime_in_seconds", 0)
             }
-        except RedisError as e:
+        except Exception as e:  # noqa: BLE001 - cache must degrade to DB
             logger.error(f"Failed to get cache stats: {e}")
             return {"healthy": False, "error": str(e)}
 
@@ -378,13 +425,19 @@ class AirQualityCache:
 
 # Health check endpoint helper
 async def cache_health_status() -> Dict[str, Any]:
-    """Get comprehensive cache health status."""
+    """Get comprehensive cache health status.
+
+    Uses the throttled PING-based health_check for the status field (a
+    full redis.info() on every k8s probe would add needless Redis load);
+    full stats are still reported when available.
+    """
     try:
         cache = await get_cache()
+        healthy = await cache.health_check()
         stats = await cache.get_stats()
-        
+
         return {
-            "status": "healthy" if stats.get("healthy") else "unhealthy",
+            "status": "healthy" if healthy and stats.get("healthy") else "unhealthy",
             "redis_stats": stats,
             "cache_metrics": metrics.to_dict(),
             "last_health_check": cache._last_health_check.isoformat(),

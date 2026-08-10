@@ -12,8 +12,7 @@ from sqlalchemy import (
     Index, ForeignKey, UniqueConstraint, CheckConstraint
 )
 from sqlalchemy.dialects import postgresql
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
 from geoalchemy2.types import Geography
