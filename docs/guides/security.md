@@ -69,7 +69,46 @@ than disabling the job.
 
 ---
 
-## 5. Local quick check
+## 6. Secrets inventory & where they live (2026-08-11)
+
+| Secret | Purpose | Local | GitLab CI/CD | GitHub Actions | Cloudflare Pages | k8s Secret |
+|--------|---------|-------|--------------|----------------|------------------|------------|
+| `DATABASE_URL` | PostGIS connection | `api/.env` | — | — | — | ✅ `geoairquality-secrets` |
+| `POSTGRES_PASSWORD` | Postgres superuser pw | compose dev only | — | — | — | ✅ `geoairquality-secrets` |
+| `REDIS_PASSWORD` | Redis auth (optional) | — | — | — | — | ✅ `geoairquality-secrets` |
+| `SECRET_KEY` | JWT/auth signing | `api/.env` | ✅ masked+protected+hidden | ✅ | — | ✅ `geoairquality-secrets` |
+| `AIRNOW_API_KEY` | EPA AirNow news | `api/.env` | ✅ (optional) | ✅ (optional) | — | ✅ `geoairquality-secrets` |
+| `NEWSAPI_KEY` | NewsAPI news | `api/.env` | ✅ (optional) | ✅ (optional) | — | ✅ `geoairquality-secrets` |
+| `CLOUDFLARE_API_TOKEN` | Pages deploys in CI | — | ✅ masked+protected+hidden | ✅ | — | — |
+| `CLOUDFLARE_ACCOUNT_ID` | CF account (non-secret ID) | — | ✅ var | ✅ var | — | — |
+| `CLOUDFLARE_PAGES_PROJECT` | Pages project (non-secret) | — | ✅ var | ✅ var | ✅ project name | — |
+| `API_ORIGIN` | Backend URL for the edge proxy | `frontend/.dev.vars` | — | — | ✅ binding | — |
+| `KUBE_CONFIG_STAGING` | base64 kubeconfig | — | ✅ masked+protected+hidden | ✅ | — | — |
+| `KUBE_CONFIG_PRODUCTION` | base64 kubeconfig | — | ✅ masked+protected+hidden | ✅ | — | — |
+| `STAGING_NAMESPACE` | k8s namespace (non-secret) | — | ✅ var | ✅ var | — | — |
+| `PRODUCTION_NAMESPACE` | k8s namespace (non-secret) | — | ✅ var | ✅ var | — | — |
+
+**Already wired (this pass):** the four non-secret vars and a generated
+`SECRET_KEY` are set on **GitLab** (`kakashi3litez/GeoAirQuality`) and
+**GitHub** (`kakashi3lite/GeoAirQuality`); the Cloudflare Pages project
+`geoairquality-breathe` exists with `API_ORIGIN` bound.
+
+**You still need to provide** (values are real secrets — run the interactive
+helper and type them directly into the terminal; they are never sent through
+chat):
+
+```bash
+./scripts/setup-ci-secrets.sh        # prompts for each, silent input
+./scripts/setup-ci-secrets.sh --check   # see what is set
+```
+
+The script wires `CLOUDFLARE_API_TOKEN`, both `KUBE_CONFIG_*`, `AIRNOW_API_KEY`
+and `NEWSAPI_KEY` into GitLab (masked+protected+hidden) and GitHub. Then fill
+the k8s Secret (SealedSecrets/ESO) with the same DB/Redis/news values.
+
+---
+
+## 7. Local quick check
 
 ```bash
 # Scan working tree + history for secrets
@@ -82,10 +121,11 @@ docker run --rm -v "$PWD:/repo" -w /repo gitleaks/gitleaks:latest \
 
 ---
 
-## 6. Related files
+## 8. Related files
 
 - `.gitlab-ci.yml` — `scan:secrets` blocking gate
 - `.github/workflows/ci.yml` — `secret-scan` blocking gate
 - `.gitignore` — excludes `.env`, `.*` AppleDouble metadata, CI artifacts
 - `deploy/k8s/production-deployment.yaml` — placeholder Secret + hardening notes
+- `scripts/setup-ci-secrets.sh` — interactive wiring of the real secrets
 - `docs/ci-cd.md` — pipeline runbook incl. security scanning setup

@@ -38,9 +38,14 @@ metadata:
   namespace: geoairquality-prod
 type: Opaque
 stringData:
-  DATABASE_URL: "postgresql+asyncpg://geoair_user:CHANGE_THIS_PASSWORD@geoairquality-postgres:5432/geoairquality"
+  # NOTE: main.py uses a SYNC SQLAlchemy engine (psycopg2) — the URL must
+  # be postgresql:// (postgresql+asyncpg:// crashes startup).
+  DATABASE_URL: "postgresql://geoair_user:CHANGE_THIS_PASSWORD@geoairquality-postgres:5432/geoairquality"
+  POSTGRES_PASSWORD: "CHANGE_THIS_PASSWORD"
   SECRET_KEY: "CHANGE_THIS_SECRET_KEY_IN_PRODUCTION"
   REDIS_PASSWORD: "CHANGE_THIS_REDIS_PASSWORD"
+  AIRNOW_API_KEY: "CHANGE_THIS_AIRNOW_KEY"
+  NEWSAPI_KEY: "CHANGE_THIS_NEWSAPI_KEY"
 
 ---
 

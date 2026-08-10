@@ -82,12 +82,17 @@ create_env_files() {
     print_status "Creating environment configuration files..."
     
     # API Environment
+    # NOTE: main.py uses a SYNC SQLAlchemy engine (psycopg2) — use
+    # postgresql:// (NOT postgresql+asyncpg:// which crashes startup).
+    # Host port 5433 matches docker-compose.yml (avoids a host Postgres on 5432).
     cat > api/.env << EOF
-DATABASE_URL=postgresql+asyncpg://geoair_user:geoair_pass@localhost:5432/geoairquality
-REDIS_URL=redis://localhost:6379/0
+DATABASE_URL=postgresql://geoair_user:geoair_pass@localhost:5433/geoairquality
+REDIS_URL=redis://localhost:6380/0
 LOG_LEVEL=INFO
 ENVIRONMENT=development
 SECRET_KEY=$(openssl rand -hex 32 2>/dev/null || echo "dev-secret-key-change-in-production")
+AIRNOW_API_KEY=
+NEWSAPI_KEY=
 CORS_ORIGINS=["http://localhost:3000", "http://localhost:8080"]
 EOF
 

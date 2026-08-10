@@ -90,24 +90,33 @@ green reports, flip them to blocking:
    - Enable *Keep divergent refs* and only mirror `main`.
 2. **Enable Container Registry** (Settings → Packages & Registries).
 3. **CI/CD variables** (Settings → CI/CD → Variables):
-   | Variable | Example | Protected? |
-   |----------|---------|-----------|
-   | `KUBE_CONFIG_STAGING` | `base64 -w0 ~/.kube/config` | yes |
-   | `KUBE_CONFIG_PRODUCTION` | `base64 -w0 ~/.kube/prod-config` | yes (masked) |
-   | `STAGING_NAMESPACE` | `geoairquality-staging` | — |
-   | `PRODUCTION_NAMESPACE` | `geoairquality-prod` | — |
+   | Variable | Example | Protected? | Status |
+   |----------|---------|-----------|--------|
+   | `KUBE_CONFIG_STAGING` | `base64 -w0 ~/.kube/config` | yes (masked+hidden) | ⏳ run the helper |
+   | `KUBE_CONFIG_PRODUCTION` | `base64 -w0 ~/.kube/prod-config` | yes (masked+hidden) | ⏳ run the helper |
+   | `CLOUDFLARE_API_TOKEN` | token w/ Pages:Edit | yes (masked+hidden) | ⏳ run the helper |
+   | `AIRNOW_API_KEY` / `NEWSAPI_KEY` | optional | masked | ⏳ run the helper |
+   | `CLOUDFLARE_ACCOUNT_ID` | `c36e04fe…` | — | ✅ set |
+   | `CLOUDFLARE_PAGES_PROJECT` | `geoairquality-breathe` | — | ✅ set |
+   | `STAGING_NAMESPACE` | `geoairquality-staging` | — | ✅ set |
+   | `PRODUCTION_NAMESPACE` | `geoairquality-prod` | — | ✅ set |
+   | `SECRET_KEY` | generated | yes (masked+hidden) | ✅ set |
    - `CI_REGISTRY_USER`/`CI_REGISTRY_PASSWORD`/`CI_REGISTRY` are auto-injected.
+   - ⏳ items are real secrets — run `./scripts/setup-ci-secrets.sh` and type
+     them into the terminal (values never pass through chat).
 4. **Environment approvals** (Deployments → Environments → `production`)
    → *Enable approval rules* → required approvers ≥ 1.
 
 ## 4. GitHub Actions setup (one-time)
 
 1. **Secrets** (Settings → Secrets → Actions): `KUBE_CONFIG_STAGING`,
-   `KUBE_CONFIG_PRODUCTION` (base64).
-2. **Variables**: `STAGING_NAMESPACE`, `PRODUCTION_NAMESPACE`.
-3. **Environments** (Settings → Environments): create `staging` and
-   `production`; on `production` add required reviewers for the approval
-   gate.
+   `KUBE_CONFIG_PRODUCTION`, `CLOUDFLARE_API_TOKEN`, `SECRET_KEY` ✅ (generated),
+   plus optional `AIRNOW_API_KEY`/`NEWSAPI_KEY` — run
+   `./scripts/setup-ci-secrets.sh`.
+2. **Variables**: `STAGING_NAMESPACE`, `PRODUCTION_NAMESPACE`,
+   `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_PAGES_PROJECT` — ✅ all set.
+3. **Environments** (Settings → Environments): create `staging`, `production`
+   and `pages`; on `production` add required reviewers for the approval gate.
 4. **GHCR**: images publish to `ghcr.io/<owner>/GeoAirQuality/*` using the
    built-in `GITHUB_TOKEN` (Packages → ensure the token has write access).
 

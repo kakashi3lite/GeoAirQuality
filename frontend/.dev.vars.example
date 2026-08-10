@@ -1,0 +1,8 @@
+# Wrangler local dev template (Cloudflare Pages)
+# ----------------------------------------------
+# Copy to frontend/.dev.vars and fill in values. NEVER commit .dev.vars.
+# Used by `wrangler pages dev` for local bindings.
+#
+# Backend origin the /api edge proxy forwards to. In production this is
+# set on the Pages project (Settings -> Variables) as API_ORIGIN.
+API_ORIGIN=http://localhost:8000
