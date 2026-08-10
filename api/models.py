@@ -11,6 +11,7 @@ from sqlalchemy import (
     Column, Integer, Float, String, DateTime, Boolean, Text,
     Index, ForeignKey, UniqueConstraint, CheckConstraint
 )
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -309,6 +310,109 @@ class DataSource(Base):
         CheckConstraint('failed_ingestions >= 0', name='positive_failures'),
         Index('idx_source_active_schedule', 'is_active', 'next_scheduled_ingestion'),
     )
+
+class PatientProfile(Base):
+    """Patient health profile for personalized safety assessments.
+    
+    Stores respiratory conditions, personalized pollutant thresholds,
+    and home location. Used by the safety engine to calibrate risk
+    scoring and recommendations to each patient's specific condition.
+    """
+    __tablename__ = 'patient_profiles'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(100), nullable=False, unique=True, index=True)
+
+    # Health conditions: asthma, copd, bronchitis, allergy
+    conditions = Column(
+        postgresql.ARRAY(String(50)),
+        nullable=False,
+        default=['asthma']
+    )
+
+    # Personalized pollutant thresholds
+    aqi_threshold = Column(Integer, nullable=False, default=100)
+    pm25_threshold = Column(Float, nullable=False, default=35.4)
+    o3_threshold = Column(Float, nullable=False, default=70.0)
+    no2_threshold = Column(Float, nullable=False, default=100.0)
+    alert_radius_km = Column(Float, nullable=False, default=25.0)
+
+    # Home location
+    home_lat = Column(Float, nullable=False, default=40.7128)
+    home_lon = Column(Float, nullable=False, default=-74.0060)
+    home_location = Column(
+        Geometry('POINT', srid=4326, spatial_index=True),
+        nullable=True
+    )
+
+    # Reserved for future push/email notification delivery
+    notification_preferences = Column(postgresql.JSONB, default=dict)
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    # Relationships
+    symptoms = relationship(
+        "SymptomLog",
+        back_populates="patient",
+        cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        CheckConstraint('aqi_threshold >= 0', name='positive_aqi_threshold'),
+        CheckConstraint('pm25_threshold >= 0', name='positive_pm25_threshold'),
+        CheckConstraint('o3_threshold >= 0', name='positive_o3_threshold'),
+        CheckConstraint('no2_threshold >= 0', name='positive_no2_threshold'),
+        CheckConstraint('alert_radius_km > 0 AND alert_radius_km <= 200',
+                       name='valid_alert_radius'),
+        CheckConstraint('home_lat >= -90 AND home_lat <= 90', name='valid_home_lat'),
+        CheckConstraint('home_lon >= -180 AND home_lon <= 180', name='valid_home_lon'),
+        Index('idx_patient_conditions', 'conditions'),
+    )
+
+
+class SymptomLog(Base):
+    """Patient symptom log for trigger correlation and personalization.
+    
+    Stores symptom events with a snapshot of environmental conditions
+    at the time of logging. Enables the safety engine to learn personal
+    triggers (e.g., 'symptoms consistently appear when PM2.5 > 40').
+    """
+    __tablename__ = 'symptom_logs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    patient_id = Column(
+        Integer,
+        ForeignKey('patient_profiles.id'),
+        nullable=False,
+        index=True
+    )
+    patient = relationship("PatientProfile", back_populates="symptoms")
+
+    symptom_type = Column(String(50), nullable=False)
+    severity = Column(Integer, nullable=False)  # 1-5 scale
+
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    location = Column(
+        Geometry('POINT', srid=4326, spatial_index=True),
+        nullable=True
+    )
+
+    # Snapshot of conditions at the time of symptom (AQI, temp, humidity...)
+    weather_snapshot = Column(postgresql.JSONB, default=dict)
+
+    logged_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint('severity >= 1 AND severity <= 5', name='valid_severity'),
+        CheckConstraint('lat >= -90 AND lat <= 90', name='valid_lat'),
+        CheckConstraint('lon >= -180 AND lon <= 180', name='valid_lon'),
+        Index('idx_symptom_patient_time', 'patient_id', 'logged_at'),
+        Index('idx_symptom_type_time', 'symptom_type', 'logged_at'),
+    )
+
 
 # Create database functions for common operations
 class DatabaseFunctions:

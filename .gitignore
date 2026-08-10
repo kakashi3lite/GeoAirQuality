@@ -169,3 +169,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# macOS metadata artifacts
+._*
+.DS_Store
