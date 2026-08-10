@@ -414,6 +414,67 @@ class SymptomLog(Base):
     )
 
 
+class NewsArticle(Base):
+    """Curated air-quality news events and official alerts.
+
+    Stores official alerts (EPA AirNow) and news-media articles that
+    affect respiratory patients, enriched and geo-tagged to the spatial
+    grid. Feeds the safety engine's news component (severity ×
+    respiratory relevance × proximity) and the /news/nearby endpoint.
+    """
+    __tablename__ = 'news_articles'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    external_id = Column(String(200), nullable=False, unique=True)
+    source_name = Column(String(100), nullable=False)
+    # official_alert | news_media
+    source_type = Column(String(20), nullable=False)
+    title = Column(String(500), nullable=False)
+    summary = Column(Text)
+    url = Column(String(1000))
+
+    published_at = Column(DateTime, nullable=False, index=True)
+    fetched_at = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+
+    # Geo-tagged location (nullable if it could not be resolved)
+    latitude = Column(Float)
+    longitude = Column(Float)
+    location = Column(
+        Geometry('POINT', srid=4326, spatial_index=True),
+        nullable=True
+    )
+    grid_cell_id = Column(Integer, ForeignKey('spatial_grids.id'), index=True)
+
+    # Rule-based enrichment
+    event_category = Column(String(30), nullable=False, default='general')
+    severity = Column(Integer, nullable=False, default=0)       # 0-100
+    respiratory_relevance = Column(Integer, nullable=False, default=0)  # 0-100
+    is_active = Column(Boolean, default=True, index=True)
+    raw_metadata = Column(postgresql.JSONB, default=dict)
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint('severity >= 0 AND severity <= 100', name='valid_severity'),
+        CheckConstraint(
+            'respiratory_relevance >= 0 AND respiratory_relevance <= 100',
+            name='valid_respiratory_relevance'
+        ),
+        CheckConstraint(
+            'latitude IS NULL OR (latitude >= -90 AND latitude <= 90)',
+            name='valid_latitude'
+        ),
+        CheckConstraint(
+            'longitude IS NULL OR (longitude >= -180 AND longitude <= 180)',
+            name='valid_longitude'
+        ),
+        Index('idx_news_published', 'published_at'),
+        Index('idx_news_active_published', 'is_active', 'published_at'),
+        Index('idx_news_grid_published', 'grid_cell_id', 'published_at'),
+        Index('idx_news_metadata_gin', 'raw_metadata', postgresql_using='gin'),
+    )
+
+
 # Create database functions for common operations
 class DatabaseFunctions:
     """SQL functions for common geospatial and time-series operations."""

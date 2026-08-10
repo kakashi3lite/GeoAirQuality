@@ -10,11 +10,10 @@ import pytest
 import pandas as pd
 import dask.dataframe as dd
 import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import tempfile
 import os
 import sys
-from pathlib import Path
 
 # Import our ingest module
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "data-pipeline"))

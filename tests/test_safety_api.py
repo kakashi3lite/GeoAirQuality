@@ -16,17 +16,16 @@ Run:  pytest tests/test_safety_api.py -v
 
 import sys
 import os
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "api"))
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
 
 import main
-from models import PatientProfile, WeatherReading
+from models import PatientProfile, WeatherReading, NewsArticle
 
 
 # ----------------------------------------------------------------------
@@ -82,10 +81,11 @@ class FakeScalars:
 class FakeSession:
     """Stub DB session returning controlled rows per entity type."""
 
-    def __init__(self, profile=None, weather_rows=None, aq_rows=None):
+    def __init__(self, profile=None, weather_rows=None, aq_rows=None, news_rows=None):
         self.profile = profile
         self.weather_rows = weather_rows or []
         self.aq_rows = aq_rows or []
+        self.news_rows = news_rows or []
         self.added = []
         self.committed = 0
         self.refreshed = 0
@@ -101,6 +101,8 @@ class FakeSession:
             return FakeScalarResult([self.profile] if self.profile else [])
         if entity is WeatherReading:
             return FakeScalarsResult(self.weather_rows)
+        if entity is NewsArticle:
+            return FakeScalarsResult(self.news_rows)
         # AirQualityReading and anything else -> empty
         return FakeScalarsResult(self.aq_rows)
 

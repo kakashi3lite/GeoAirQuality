@@ -25,7 +25,8 @@ from geoalchemy2.functions import (
 
 from models import (
     SpatialGrid, AirQualityReading, WeatherReading,
-    AggregatedData, DataSource, PatientProfile, SymptomLog, Base
+    AggregatedData, DataSource, PatientProfile, SymptomLog,
+    NewsArticle, Base
 )
 from cache import get_cache, cached, cache_health_status, CacheSettings
 from services.safety_engine import (
@@ -33,6 +34,14 @@ from services.safety_engine import (
     data_status_from_snapshot,
 )
 from services.recommendation_engine import RecommendationEngine
+from services.news_store import get_active_articles_nearby
+from services.news_scheduler import (
+    NewsScheduler,
+    NEWS_FETCHES,
+    NEWS_FETCH_ERRORS,
+    NEWS_ARTICLES_ACTIVE,
+    NEWS_LAST_FETCH,
+)
 
 # Prometheus metrics for the patient safety engine
 SAFETY_ASSESSMENTS = Counter(
@@ -103,11 +112,23 @@ async def lifespan(app: FastAPI):
         logger.info("Cache initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize cache: {e}")
-    
+
+    # Start the background news scheduler (graceful: no-op without API keys)
+    scheduler_task = asyncio.create_task(
+        NewsScheduler().bind_session_factory(SessionLocal).run_forever()
+    )
+
     yield
     
     # Shutdown
     logger.info("Shutting down GeoAirQuality API")
+
+    # Stop the news scheduler
+    scheduler_task.cancel()
+    try:
+        await scheduler_task
+    except (asyncio.CancelledError, Exception):
+        pass
     
     # Close cache connections
     try:
@@ -218,6 +239,21 @@ class SafetyAssessmentResponse(BaseModel):
     forecast_window: Optional[Dict[str, Any]] = None
     route_risk: Optional[Dict[str, Any]] = None
     generated_at: datetime
+
+
+class NewsResponse(BaseModel):
+    """Curated air-quality news/alert event near a location."""
+    id: int
+    title: str
+    summary: Optional[str] = None
+    url: Optional[str] = None
+    source_name: str
+    source_type: str
+    event_category: str
+    severity: int
+    respiratory_relevance: int
+    distance_km: Optional[float] = None
+    published_at: datetime
 
 
 # Health check endpoints
@@ -718,17 +754,34 @@ async def get_patient_safety_assessment(
             snapshot = _build_environmental_snapshot(
                 db, lat, lon, context.alert_radius_km
             )
+
+            # Active news/alert events within the patient's alert radius
+            nearby = get_active_articles_nearby(
+                db, lat, lon, context.alert_radius_km, hours=72, limit=20
+            )
+            news_events = [
+                {
+                    "title": item["article"].title,
+                    "category": item["article"].event_category,
+                    "severity": item["article"].severity,
+                    "respiratory_relevance": item["article"].respiratory_relevance,
+                    "distance_km": item["distance_km"],
+                }
+                for item in nearby
+            ]
+
             route_risk = None
             if dest_lat is not None and dest_lon is not None:
                 route_risk = _compute_route_risk(
                     db, context, lat, lon, dest_lat, dest_lon
                 )
-            return context, snapshot, route_risk
+            return context, snapshot, news_events, route_risk
 
-        context, snapshot, route_risk = await asyncio.to_thread(_db_work)
+        context, snapshot, news_events, route_risk = await asyncio.to_thread(
+            _db_work
+        )
 
-        # Phase 1: news + history inputs are empty; wired in Phases 2 & 3
-        news_events: List[Dict[str, Any]] = []
+        # Phase 3 will wire personal symptom history here
         symptoms: List[Dict[str, Any]] = []
 
         scorer = RiskScorer(context)
@@ -784,6 +837,68 @@ async def get_patient_safety_assessment(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+# News endpoints
+@app.get("/api/v1/news/nearby", response_model=List[NewsResponse])
+async def get_news_nearby(
+    lat: float = Query(..., ge=-90, le=90, description="Latitude"),
+    lon: float = Query(..., ge=-180, le=180, description="Longitude"),
+    radius_km: float = Query(25, ge=1, le=200, description="Search radius in km"),
+    hours: int = Query(72, ge=1, le=168, description="Hours of news to consider"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum results"),
+    min_relevance: int = Query(
+        0, ge=0, le=100, description="Minimum respiratory relevance (0-100)"
+    ),
+    db: Session = Depends(get_db)
+):
+    """Curated air-quality news/alert events near a location.
+
+    Secondary UX — the primary experience is the personalized safety
+    assessment, which already folds nearby events into its score. This
+    endpoint lets patients drill down into the source articles.
+    """
+    try:
+        cache = await get_cache()
+        cache_key = (
+            f"news_nearby:{lat:.3f}:{lon:.3f}:{radius_km:.0f}:"
+            f"{hours}:{limit}:{min_relevance}"
+        )
+        cached_result = await cache.get(cache_key)
+        if cached_result is not None:
+            return [NewsResponse(**item) for item in cached_result]
+
+        items = await asyncio.to_thread(
+            get_active_articles_nearby,
+            db, lat, lon, radius_km,
+            hours=hours, limit=limit, min_relevance=min_relevance,
+        )
+        response = [
+            NewsResponse(
+                id=item["article"].id,
+                title=item["article"].title,
+                summary=item["article"].summary,
+                url=item["article"].url,
+                source_name=item["article"].source_name,
+                source_type=item["article"].source_type,
+                event_category=item["article"].event_category,
+                severity=item["article"].severity,
+                respiratory_relevance=item["article"].respiratory_relevance,
+                distance_km=item["distance_km"],
+                published_at=item["article"].published_at,
+            )
+            for item in items
+        ]
+        serialized = [
+            r.model_dump() if hasattr(r, "model_dump") else r.dict()
+            for r in response
+        ]
+        await cache.set(cache_key, serialized, ttl=600)
+        return response
+
+    except Exception as e:
+        logger.error(f"Error fetching news nearby: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 # Metrics endpoint
 @app.get("/metrics")
 async def get_metrics():
@@ -820,6 +935,22 @@ geoairquality_safety_cache_hits_total {SAFETY_CACHE_HITS._value.get()}
 # HELP geoairquality_safety_avg_score Most recent safety score (0-100)
 # TYPE geoairquality_safety_avg_score gauge
 geoairquality_safety_avg_score {SAFETY_AVG_SCORE._value.get()}
+
+# HELP geoairquality_news_fetches_total News fetch cycles completed
+# TYPE geoairquality_news_fetches_total counter
+geoairquality_news_fetches_total {NEWS_FETCHES._value.get()}
+
+# HELP geoairquality_news_fetch_errors_total News fetch cycles that failed
+# TYPE geoairquality_news_fetch_errors_total counter
+geoairquality_news_fetch_errors_total {NEWS_FETCH_ERRORS._value.get()}
+
+# HELP geoairquality_news_articles_active Active news articles stored
+# TYPE geoairquality_news_articles_active gauge
+geoairquality_news_articles_active {NEWS_ARTICLES_ACTIVE._value.get()}
+
+# HELP geoairquality_news_last_fetch_timestamp Last successful news fetch
+# TYPE geoairquality_news_last_fetch_timestamp gauge
+geoairquality_news_last_fetch_timestamp {NEWS_LAST_FETCH._value.get()}
 """
     
     return JSONResponse(

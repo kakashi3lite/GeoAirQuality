@@ -17,7 +17,10 @@ install:
 	$(PIP) install pytest-cov bandit pip-audit
 
 ## Enforced lint (new code we own). BLOCKING in CI.
+## NOTE: macOS external volumes (exFAT/FAT) create '._*' AppleDouble
+## metadata files that break flake8/alembic — strip them defensively.
 lint:
+	find . -name '._*' -not -path './.git/*' -delete 2>/dev/null || true
 	flake8 api/services/ tests/ --max-line-length=100
 	black --check api/services/ tests/
 
@@ -26,10 +29,12 @@ lint-fix:
 	black api/services/ tests/
 
 ## Unit tests (no external services needed). BLOCKING in CI.
-## Runs the supported suite (safety engine + API).
+## Runs the supported suite (safety engine + API + news intelligence).
 test:
+	find . -name '._*' -not -path './.git/*' -delete 2>/dev/null || true
 	cd api && $(PYTHON) -m pytest \
 		../tests/test_safety_engine.py ../tests/test_safety_api.py \
+		../tests/test_news.py \
 		--cov=services --cov=main --cov-report=xml --cov-report=term \
 		--junitxml=../$(REPORT) -q
 

@@ -93,7 +93,7 @@ class RecommendationEngine:
                         "type": "general",
                         "text": (
                             f"Conditions are favorable for {label}. "
-                            f"Enjoy your outdoor activities."
+                            "Enjoy your outdoor activities."
                         ),
                     }
                 )
@@ -102,8 +102,8 @@ class RecommendationEngine:
                     {
                         "type": "precaution",
                         "text": (
-                            f"Limit prolonged outdoor exertion. Keep your rescue "
-                            f"medication accessible if you step outside."
+                            "Limit prolonged outdoor exertion. Keep your rescue "
+                            "medication accessible if you step outside."
                         ),
                     }
                 )
@@ -136,8 +136,8 @@ class RecommendationEngine:
                     "text": (
                         f"PM2.5 is {snapshot.pm25:.0f} µg/m³ — above your "
                         f"{label} threshold of {self.thresholds.pm25:.0f} µg/m³. "
-                        f"Wear an N95 mask if you must go outside and limit "
-                        f"exposure to under 30 minutes."
+                        "Wear an N95 mask if you must go outside and limit "
+                        "exposure to under 30 minutes."
                     ),
                 }
             )
@@ -173,7 +173,7 @@ class RecommendationEngine:
                     "text": (
                         f"High humidity ({snapshot.humidity:.0f}%) can trigger "
                         f"{label}. Consider using your preventive inhaler "
-                        f"before going out."
+                        "before going out."
                     ),
                 }
             )
@@ -203,7 +203,7 @@ class RecommendationEngine:
                         "text": (
                             f"Active wildfire smoke reported {distance:.0f} km "
                             f"away ({title}). Avoid that direction and keep "
-                            f"windows closed."
+                            "windows closed."
                         ),
                     }
                 )
@@ -214,7 +214,7 @@ class RecommendationEngine:
                         "text": (
                             f"Localized pollution reported {distance:.0f} km "
                             f"away ({title}). Consider alternate routes that "
-                            f"avoid the affected area."
+                            "avoid the affected area."
                         ),
                     }
                 )
@@ -225,7 +225,7 @@ class RecommendationEngine:
                         "text": (
                             f"A health advisory affecting {label} patients is "
                             f"active ({title}). Limit outdoor exposure until it "
-                            f"is lifted."
+                            "is lifted."
                         ),
                     }
                 )
@@ -239,7 +239,7 @@ class RecommendationEngine:
                     {
                         "type": "route",
                         "text": (
-                            f"The route to your destination is notably safer "
+                            "The route to your destination is notably safer "
                             f"than your current area (route safety {route_score}/100 "
                             f"vs {score}/100). Consider heading out now."
                         ),
@@ -250,9 +250,9 @@ class RecommendationEngine:
                     {
                         "type": "route",
                         "text": (
-                            f"The route to your destination is riskier than your "
+                            "The route to your destination is riskier than your "
                             f"current area (route safety {route_score}/100). "
-                            f"Consider delaying travel or choosing an alternate path."
+                            "Consider delaying travel or choosing an alternate path."
                         ),
                     }
                 )
@@ -262,8 +262,8 @@ class RecommendationEngine:
                         "type": "route",
                         "text": (
                             f"Route safety to your destination is {route_score}/100 "
-                            f"— similar to your current area. Proceed with the "
-                            f"general precautions above."
+                            "— similar to your current area. Proceed with the "
+                            "general precautions above."
                         ),
                     }
                 )
