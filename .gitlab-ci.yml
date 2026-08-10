@@ -86,7 +86,7 @@ lint:enforced:
 
 # Legacy code (main.py, models.py, cache.py, data-pipeline/) is not yet
 # black/flake8 clean. Report but do not block — enforced after a formatting
-# pass (see docs/ci-cd.md → "Lint enforcement path").
+# pass (see docs/guides/ci-cd.md → "Lint enforcement path").
 lint:legacy:
   stage: lint
   script:
