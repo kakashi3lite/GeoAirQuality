@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --glow: rgba(0, 228, 100, 0.45);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-abyss-950 text-slate-100 antialiased;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  overflow-x: hidden;
+}
+
+/* ---- Ambient atmosphere ---- */
+.ambient-sky {
+  background:
+    radial-gradient(1200px 600px at 20% -10%, rgba(56, 130, 246, 0.22), transparent 60%),
+    radial-gradient(900px 500px at 85% 10%, rgba(34, 197, 94, 0.12), transparent 55%),
+    radial-gradient(800px 600px at 50% 110%, rgba(168, 85, 247, 0.10), transparent 60%),
+    linear-gradient(180deg, #0b1220 0%, #0e1a2e 55%, #0b1526 100%);
+}
+
+/* drifting air particles */
+.particle {
+  position: absolute;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.9), rgba(148, 197, 255, 0.15));
+  opacity: 0.14;
+  animation: particleFloat linear infinite;
+  pointer-events: none;
+}
+
+@keyframes particleFloat {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(40px, -90px, 0) scale(1.4);
+  }
+  100% {
+    transform: translate3d(-30px, -180px, 0) scale(0.8);
+  }
+}
+
+/* ---- Glass surfaces ---- */
+.glass {
+  @apply rounded-3xl border border-white/10;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.03));
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 8px 32px rgba(2, 8, 23, 0.35);
+}
+
+.glass-inset {
+  @apply rounded-2xl border border-white/5;
+  background: rgba(3, 10, 25, 0.35);
+}
+
+/* ---- Score glow ---- */
+.score-glow {
+  filter: drop-shadow(0 0 18px var(--glow));
+}
+
+.gradient-text {
+  background: linear-gradient(120deg, #e2e8f0, #93c5fd, #e2e8f0);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* focus rings for a11y */
+a:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible {
+  @apply outline-2 outline-offset-2 outline-sky-400;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .particle,
+  .ambient-sky,
+  * {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001s !important;
+  }
+}
+
+/* mobile-safe bottom padding for the fixed nav */
+@media (max-width: 1023px) {
+  .pb-28 {
+    padding-bottom: 7rem;
+  }
+}
+

@@ -181,6 +181,11 @@ report.xml
 bandit.json
 pip-audit*.json
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
 # Runtime / junk
 state.db
 logs/

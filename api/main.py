@@ -1029,6 +1029,8 @@ async def get_news_nearby(
                 severity=item["article"].severity,
                 respiratory_relevance=item["article"].respiratory_relevance,
                 distance_km=item["distance_km"],
+                latitude=item["article"].latitude,
+                longitude=item["article"].longitude,
                 published_at=item["article"].published_at,
             )
             for item in items

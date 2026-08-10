@@ -1,8 +1,8 @@
 # Frontend Development Framework - React + TypeScript
-> **STATUS: 📋 DESIGN SPEC ONLY — not yet implemented.**
-> This is the design reference for the frontend module. The live
-> implementation lives in the main codebase; this module is a
-> future-phase plan and may lag behind actual implementation.
+> **STATUS: ✅ IMPLEMENTED (2026-08-10)** — see `frontend/` (the “Breathe”
+> dashboard). This document remains the reference for the stack,
+> TypeScript types, and MapLibre configuration.
+> Build blueprint: [`wireframe-blueprint.md`](wireframe-blueprint.md)
 
 
 

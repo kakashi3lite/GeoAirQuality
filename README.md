@@ -38,6 +38,7 @@ GeoAirQuality/
 | **Safety engine** (`services/safety_engine.py`) | ✅ Implemented | Condition-calibrated risk score (Phase 1) |
 | **News intelligence** (`services/news_*`) | ✅ Implemented | AirNow + NewsAPI feed the score (Phase 2) |
 | **Data pipeline** (`data-pipeline/`) | ⚠️ Partial | `ingest_simple_minimal.py` active; Dask disabled |
+| **Frontend** (`frontend/`) | ✅ Implemented | “Breathe” dashboard: score hero, map, log, insights (`npm run dev`) |
 | **CI/CD** (`.gitlab-ci.yml`, `.github/`) | ✅ Implemented | lint→test→build→scan→publish→deploy |
 | **Security** | ✅ Hardened | 0-leak audit, gitleaks blocking in CI |
 | **Auth** (`api/auth/`) | 📋 Design only | JWT/RBAC spec in `docs/design/auth.md` |
