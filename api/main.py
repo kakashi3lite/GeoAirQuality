@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends, Query, Path
+from fastapi import FastAPI, HTTPException, Depends, Query, Path, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -20,21 +20,35 @@ from sqlalchemy import create_engine, text, select, func
 from sqlalchemy.orm import sessionmaker, Session
 from geoalchemy2 import Geometry, Geography
 from geoalchemy2.functions import (
-    ST_DWithin, ST_Point, ST_Distance, ST_SetSRID, ST_MakePoint
+    ST_DWithin,
+    ST_Point,
+    ST_Distance,
+    ST_SetSRID,
+    ST_MakePoint,
 )
 
 from models import (
-    SpatialGrid, AirQualityReading, WeatherReading,
-    AggregatedData, DataSource, PatientProfile, SymptomLog,
-    NewsArticle, Base
+    SpatialGrid,
+    AirQualityReading,
+    WeatherReading,
+    AggregatedData,
+    DataSource,
+    PatientProfile,
+    SymptomLog,
+    NewsArticle,
+    Base,
 )
 from cache import get_cache, cached, cache_health_status, CacheSettings
 from services.safety_engine import (
-    PatientContext, RiskScorer, EnvironmentalSnapshot, RiskLevel,
+    PatientContext,
+    RiskScorer,
+    EnvironmentalSnapshot,
+    RiskLevel,
     data_status_from_snapshot,
 )
 from services.recommendation_engine import RecommendationEngine
-from services.news_store import get_active_articles_nearby
+from services.news_store import get_active_articles_nearby, haversine_km
+from services.insights import compute_insights
 from services.news_scheduler import (
     NewsScheduler,
     NEWS_FETCHES,
@@ -45,16 +59,13 @@ from services.news_scheduler import (
 
 # Prometheus metrics for the patient safety engine
 SAFETY_ASSESSMENTS = Counter(
-    "geoairquality_safety_assessments_total",
-    "Total safety assessments computed"
+    "geoairquality_safety_assessments_total", "Total safety assessments computed"
 )
 SAFETY_AVG_SCORE = Gauge(
-    "geoairquality_safety_avg_score",
-    "Most recent safety assessment score (0-100)"
+    "geoairquality_safety_avg_score", "Most recent safety assessment score (0-100)"
 )
 SAFETY_CACHE_HITS = Counter(
-    "geoairquality_safety_cache_hits_total",
-    "Safety assessments served from cache"
+    "geoairquality_safety_cache_hits_total", "Safety assessments served from cache"
 )
 
 # Configure logging
@@ -64,7 +75,9 @@ logger = logging.getLogger(__name__)
 # Database configuration — read from the environment (k8s Secret / .env /
 # CI service), falling back to the LOCAL DEVELOPMENT default only. The dev
 # default is never intended for production.
-_DEFAULT_DATABASE_URL = "postgresql://geoair_user:geoair_pass@postgres:5432/geoairquality"
+_DEFAULT_DATABASE_URL = (
+    "postgresql://geoair_user:geoair_pass@postgres:5432/geoairquality"
+)
 DATABASE_URL = os.environ.get("DATABASE_URL", _DEFAULT_DATABASE_URL)
 if DATABASE_URL == _DEFAULT_DATABASE_URL:
     logger.warning(
@@ -82,15 +95,11 @@ engine = create_engine(
     pool_size=20,
     max_overflow=30,
     pool_pre_ping=True,
-    pool_recycle=3600
+    pool_recycle=3600,
 )
 
 # Create session factory
-SessionLocal = sessionmaker(
-    bind=engine, 
-    autocommit=False,
-    autoflush=False
-)
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
 @asynccontextmanager
@@ -98,14 +107,14 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
     logger.info("Starting GeoAirQuality API")
-    
+
     # Initialize database
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables created successfully")
     except Exception as e:
         logger.error(f"Failed to create database tables: {e}")
-    
+
     # Initialize cache
     try:
         cache = await get_cache()
@@ -119,7 +128,7 @@ async def lifespan(app: FastAPI):
     )
 
     yield
-    
+
     # Shutdown
     logger.info("Shutting down GeoAirQuality API")
 
@@ -129,14 +138,14 @@ async def lifespan(app: FastAPI):
         await scheduler_task
     except (asyncio.CancelledError, Exception):
         pass
-    
+
     # Close cache connections
     try:
         cache = await get_cache()
         await cache.close()
     except Exception as e:
         logger.error(f"Error closing cache: {e}")
-    
+
     # Close database connections
     engine.dispose()
 
@@ -146,7 +155,7 @@ app = FastAPI(
     title="GeoAirQuality API",
     description="Real-time air quality monitoring with spatial analytics",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Add CORS middleware
@@ -225,6 +234,7 @@ class HealthResponse(BaseModel):
 
 class SafetyAssessmentResponse(BaseModel):
     """Personalized safety assessment for a respiratory patient."""
+
     user_id: str
     safety_score: int = Field(..., ge=0, le=100)
     risk_level: str
@@ -243,6 +253,7 @@ class SafetyAssessmentResponse(BaseModel):
 
 class NewsResponse(BaseModel):
     """Curated air-quality news/alert event near a location."""
+
     id: int
     title: str
     summary: Optional[str] = None
@@ -256,6 +267,39 @@ class NewsResponse(BaseModel):
     published_at: datetime
 
 
+_SYMPTOM_TYPES = {
+    "coughing",
+    "wheezing",
+    "shortness_of_breath",
+    "chest_tightness",
+    "eye_irritation",
+    "fatigue",
+}
+
+
+class SymptomLogRequest(BaseModel):
+    symptom_type: str
+    severity: int = Field(..., ge=1, le=5)
+    lat: float = Field(..., ge=-90, le=90)
+    lon: float = Field(..., ge=-180, le=180)
+
+
+class SymptomLogResponse(BaseModel):
+    id: int
+    symptom_type: str
+    severity: int
+    weather_snapshot: Dict[str, Any]
+    logged_at: datetime
+
+
+class InsightsResponse(BaseModel):
+    top_triggers: List[Dict[str, Any]]
+    safest_times: List[Dict[str, Any]]
+    riskiest_times: List[Dict[str, Any]]
+    recent_trend: str
+    period_days: int
+
+
 # Health check endpoints
 @app.get("/health", response_model=HealthResponse)
 async def health_check(db: Session = Depends(get_db)):
@@ -264,23 +308,24 @@ async def health_check(db: Session = Depends(get_db)):
         # Test database connection
         result = db.execute(text("SELECT 1"))
         db_healthy = result.scalar() == 1
-        
+
         # Test PostGIS extension
         postgis_result = db.execute(text("SELECT PostGIS_Version()"))
         postgis_version = postgis_result.scalar()
-        
+
         # Get cache health
         cache_status = await cache_health_status()
-        
+
         return HealthResponse(
-            status="healthy" if db_healthy and cache_status.get("status") == "healthy" else "degraded",
+            status=(
+                "healthy"
+                if db_healthy and cache_status.get("status") == "healthy"
+                else "degraded"
+            ),
             timestamp=datetime.utcnow(),
-            database={
-                "healthy": db_healthy,
-                "postgis_version": postgis_version
-            },
+            database={"healthy": db_healthy, "postgis_version": postgis_version},
             cache=cache_status,
-            version="1.0.0"
+            version="1.0.0",
         )
     except Exception as e:
         logger.error(f"Health check failed: {e}")
@@ -299,36 +344,41 @@ async def readiness_check():
 async def get_air_quality_readings(
     lat: float = Query(..., ge=-90, le=90, description="Latitude"),
     lon: float = Query(..., ge=-180, le=180, description="Longitude"),
-    radius_km: float = Query(10, ge=0.1, le=100, description="Search radius in kilometers"),
+    radius_km: float = Query(
+        10, ge=0.1, le=100, description="Search radius in kilometers"
+    ),
     hours: int = Query(24, ge=1, le=168, description="Hours of data to retrieve"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Get air quality readings within radius of a location."""
     try:
         # Calculate time threshold
         time_threshold = datetime.utcnow() - timedelta(hours=hours)
-        
+
         # Create geography-cast point so ST_DWithin measures METERS
         # (spherical), not degrees — the geometry column is SRID 4326.
         point = ST_SetSRID(ST_MakePoint(lon, lat), 4326)
         geo_point = point.cast(Geography(srid=4326))
-        
+
         # Query air quality readings
-        query = select(AirQualityReading).where(
-            ST_DWithin(
-                AirQualityReading.location.cast(Geography(srid=4326)),
-                geo_point,
-                radius_km * 1000  # meters (spherical)
-            ),
-            AirQualityReading.timestamp >= time_threshold
-        ).order_by(
-            AirQualityReading.timestamp.desc()
-        ).limit(limit)
-        
+        query = (
+            select(AirQualityReading)
+            .where(
+                ST_DWithin(
+                    AirQualityReading.location.cast(Geography(srid=4326)),
+                    geo_point,
+                    radius_km * 1000,  # meters (spherical)
+                ),
+                AirQualityReading.timestamp >= time_threshold,
+            )
+            .order_by(AirQualityReading.timestamp.desc())
+            .limit(limit)
+        )
+
         result = db.execute(query)
         readings = result.scalars().all()
-        
+
         # Convert to response format
         response_data = []
         for reading in readings:
@@ -339,24 +389,26 @@ async def get_air_quality_readings(
                 )
             )
             coords = coords_result.first()
-            
-            response_data.append(AirQualityResponse(
-                id=reading.id,
-                location={"latitude": coords.lat, "longitude": coords.lon},
-                timestamp=reading.timestamp,
-                # The raw-sensor model does not measure PM2.5/PM10/SO2
-                pm25=reading.pm25 if hasattr(reading, 'pm25') else None,
-                pm10=reading.pm10 if hasattr(reading, 'pm10') else None,
-                no2=reading.no2_gt,
-                o3=reading.pt08_s5_o3,
-                co=reading.co_gt,
-                so2=None,
-                aqi=reading.aqi,
-                grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None
-            ))
-        
+
+            response_data.append(
+                AirQualityResponse(
+                    id=reading.id,
+                    location={"latitude": coords.lat, "longitude": coords.lon},
+                    timestamp=reading.timestamp,
+                    # The raw-sensor model does not measure PM2.5/PM10/SO2
+                    pm25=reading.pm25 if hasattr(reading, "pm25") else None,
+                    pm10=reading.pm10 if hasattr(reading, "pm10") else None,
+                    no2=reading.no2_gt,
+                    o3=reading.pt08_s5_o3,
+                    co=reading.co_gt,
+                    so2=None,
+                    aqi=reading.aqi,
+                    grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None,
+                )
+            )
+
         return response_data
-        
+
     except Exception as e:
         logger.error(f"Error fetching air quality readings: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -367,22 +419,26 @@ async def get_air_quality_readings(
 async def get_grid_air_quality(
     grid_id: str = Path(..., description="Grid cell identifier"),
     hours: int = Query(24, ge=1, le=168, description="Hours of data to retrieve"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Get air quality readings for a specific grid cell."""
     try:
         time_threshold = datetime.utcnow() - timedelta(hours=hours)
-        
+
         # Resolve the readable grid identifier to its numeric FK
         grid_ids = select(SpatialGrid.id).where(SpatialGrid.grid_id == grid_id)
-        query = select(AirQualityReading).where(
-            AirQualityReading.grid_cell_id.in_(grid_ids),
-            AirQualityReading.timestamp >= time_threshold
-        ).order_by(AirQualityReading.timestamp.desc())
-        
+        query = (
+            select(AirQualityReading)
+            .where(
+                AirQualityReading.grid_cell_id.in_(grid_ids),
+                AirQualityReading.timestamp >= time_threshold,
+            )
+            .order_by(AirQualityReading.timestamp.desc())
+        )
+
         result = db.execute(query)
         readings = result.scalars().all()
-        
+
         response_data = []
         for reading in readings:
             coords_result = db.execute(
@@ -391,23 +447,25 @@ async def get_grid_air_quality(
                 )
             )
             coords = coords_result.first()
-            
-            response_data.append(AirQualityResponse(
-                id=reading.id,
-                location={"latitude": coords.lat, "longitude": coords.lon},
-                timestamp=reading.timestamp,
-                pm25=reading.pm25,
-                pm10=reading.pm10,
-                no2=reading.no2,
-                o3=reading.o3,
-                co=reading.co,
-                so2=reading.so2,
-                aqi=reading.aqi,
-                grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None
-            ))
-        
+
+            response_data.append(
+                AirQualityResponse(
+                    id=reading.id,
+                    location={"latitude": coords.lat, "longitude": coords.lon},
+                    timestamp=reading.timestamp,
+                    pm25=reading.pm25,
+                    pm10=reading.pm10,
+                    no2=reading.no2,
+                    o3=reading.o3,
+                    co=reading.co,
+                    so2=reading.so2,
+                    aqi=reading.aqi,
+                    grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None,
+                )
+            )
+
         return response_data
-        
+
     except Exception as e:
         logger.error(f"Error fetching grid air quality: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -419,31 +477,36 @@ async def get_grid_air_quality(
 async def get_weather_readings(
     lat: float = Query(..., ge=-90, le=90, description="Latitude"),
     lon: float = Query(..., ge=-180, le=180, description="Longitude"),
-    radius_km: float = Query(10, ge=0.1, le=100, description="Search radius in kilometers"),
+    radius_km: float = Query(
+        10, ge=0.1, le=100, description="Search radius in kilometers"
+    ),
     hours: int = Query(24, ge=1, le=168, description="Hours of data to retrieve"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Get weather readings within radius of a location."""
     try:
         time_threshold = datetime.utcnow() - timedelta(hours=hours)
         point = ST_SetSRID(ST_MakePoint(lon, lat), 4326)
         geo_point = point.cast(Geography(srid=4326))
-        
-        query = select(WeatherReading).where(
-            ST_DWithin(
-                WeatherReading.location.cast(Geography(srid=4326)),
-                geo_point,
-                radius_km * 1000  # meters (spherical)
-            ),
-            WeatherReading.timestamp >= time_threshold
-        ).order_by(
-            WeatherReading.timestamp.desc()
-        ).limit(limit)
-        
+
+        query = (
+            select(WeatherReading)
+            .where(
+                ST_DWithin(
+                    WeatherReading.location.cast(Geography(srid=4326)),
+                    geo_point,
+                    radius_km * 1000,  # meters (spherical)
+                ),
+                WeatherReading.timestamp >= time_threshold,
+            )
+            .order_by(WeatherReading.timestamp.desc())
+            .limit(limit)
+        )
+
         result = db.execute(query)
         readings = result.scalars().all()
-        
+
         response_data = []
         for reading in readings:
             coords_result = db.execute(
@@ -452,22 +515,24 @@ async def get_weather_readings(
                 )
             )
             coords = coords_result.first()
-            
-            response_data.append(WeatherResponse(
-                id=reading.id,
-                location={"latitude": coords.lat, "longitude": coords.lon},
-                timestamp=reading.timestamp,
-                temperature=reading.temperature_celsius,
-                humidity=reading.humidity,
-                pressure=reading.pressure_mb,
-                wind_speed=reading.wind_kph,
-                wind_direction=reading.wind_direction,
-                precipitation=None,
-                grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None
-            ))
-        
+
+            response_data.append(
+                WeatherResponse(
+                    id=reading.id,
+                    location={"latitude": coords.lat, "longitude": coords.lon},
+                    timestamp=reading.timestamp,
+                    temperature=reading.temperature_celsius,
+                    humidity=reading.humidity,
+                    pressure=reading.pressure_mb,
+                    wind_speed=reading.wind_kph,
+                    wind_direction=reading.wind_direction,
+                    precipitation=None,
+                    grid_id=str(reading.grid_cell_id) if reading.grid_cell_id else None,
+                )
+            )
+
         return response_data
-        
+
     except Exception as e:
         logger.error(f"Error fetching weather readings: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -478,25 +543,31 @@ async def get_weather_readings(
 @cached(prefix="aggregated_grid", ttl=900)  # 15 minutes cache
 async def get_aggregated_data(
     grid_id: str = Path(..., description="Grid cell identifier"),
-    level: str = Query("hourly", regex="^(hourly|daily|weekly)$", description="Aggregation level"),
+    level: str = Query(
+        "hourly", regex="^(hourly|daily|weekly)$", description="Aggregation level"
+    ),
     days: int = Query(7, ge=1, le=30, description="Days of data to retrieve"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Get aggregated data for a grid cell."""
     try:
         time_threshold = datetime.utcnow() - timedelta(days=days)
-        
+
         # Resolve the readable grid identifier to its numeric FK
         grid_ids = select(SpatialGrid.id).where(SpatialGrid.grid_id == grid_id)
-        query = select(AggregatedData).where(
-            AggregatedData.grid_cell_id.in_(grid_ids),
-            AggregatedData.aggregation_level == level,
-            AggregatedData.time_bucket >= time_threshold
-        ).order_by(AggregatedData.time_bucket.desc())
-        
+        query = (
+            select(AggregatedData)
+            .where(
+                AggregatedData.grid_cell_id.in_(grid_ids),
+                AggregatedData.aggregation_level == level,
+                AggregatedData.time_bucket >= time_threshold,
+            )
+            .order_by(AggregatedData.time_bucket.desc())
+        )
+
         result = db.execute(query)
         aggregated = result.scalars().all()
-        
+
         return [
             AggregatedResponse(
                 grid_id=str(agg.grid_cell_id) if agg.grid_cell_id else None,
@@ -509,11 +580,11 @@ async def get_aggregated_data(
                 max_aqi=agg.max_aqi,
                 reading_count=agg.data_points_count,
                 avg_temperature=agg.avg_temperature,
-                avg_humidity=agg.avg_humidity
+                avg_humidity=agg.avg_humidity,
             )
             for agg in aggregated
         ]
-        
+
     except Exception as e:
         logger.error(f"Error fetching aggregated data: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -522,6 +593,7 @@ async def get_aggregated_data(
 # ----------------------------------------------------------------------
 # Personalized Safety Assessment (Patient Safety Engine)
 # ----------------------------------------------------------------------
+
 
 def _condition_label(context: PatientContext) -> str:
     """Human-readable label for the patient's condition(s)."""
@@ -559,16 +631,23 @@ def _build_environmental_snapshot(
     radius_m = radius_km * 1000
     snapshot = EnvironmentalSnapshot()
 
-    weather_rows = db.execute(
-        select(WeatherReading).where(
-            ST_DWithin(
-                WeatherReading.location.cast(Geography(srid=4326)),
-                geo_point,
-                radius_m,
-            ),
-            WeatherReading.timestamp >= time_threshold,
-        ).order_by(WeatherReading.timestamp.desc()).limit(limit)
-    ).scalars().all()
+    weather_rows = (
+        db.execute(
+            select(WeatherReading)
+            .where(
+                ST_DWithin(
+                    WeatherReading.location.cast(Geography(srid=4326)),
+                    geo_point,
+                    radius_m,
+                ),
+                WeatherReading.timestamp >= time_threshold,
+            )
+            .order_by(WeatherReading.timestamp.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
 
     if weather_rows:
         w = weather_rows[0]
@@ -587,16 +666,23 @@ def _build_environmental_snapshot(
             snapshot.grid_id = str(w.grid_cell_id)
 
     # Augment / fall back using air quality readings
-    aq_rows = db.execute(
-        select(AirQualityReading).where(
-            ST_DWithin(
-                AirQualityReading.location.cast(Geography(srid=4326)),
-                geo_point,
-                radius_m,
-            ),
-            AirQualityReading.timestamp >= time_threshold,
-        ).order_by(AirQualityReading.timestamp.desc()).limit(limit)
-    ).scalars().all()
+    aq_rows = (
+        db.execute(
+            select(AirQualityReading)
+            .where(
+                ST_DWithin(
+                    AirQualityReading.location.cast(Geography(srid=4326)),
+                    geo_point,
+                    radius_m,
+                ),
+                AirQualityReading.timestamp >= time_threshold,
+            )
+            .order_by(AirQualityReading.timestamp.desc())
+            .limit(limit)
+        )
+        .scalars()
+        .all()
+    )
 
     if aq_rows:
         a = aq_rows[0]
@@ -623,12 +709,15 @@ def _compute_route_risk(
     lon: float,
     dest_lat: float,
     dest_lon: float,
+    news_events: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Sample conditions along the origin->destination corridor.
 
     Uses a fixed 5km sampling radius per point (not the patient's larger
     alert radius) so local variation along the route is captured instead
     of being over-smoothed. Scoring still uses the patient's thresholds.
+    Returns safest/worst segments plus any news events intersecting the
+    corridor.
     """
     mid_lat = (lat + dest_lat) / 2.0
     mid_lon = (lon + dest_lon) / 2.0
@@ -647,23 +736,46 @@ def _compute_route_risk(
         )
         assessment = scorer.assess(snap)
         scores.append(assessment["safety_score"])
-        segments.append({
-            "point": label,
-            "safety_score": assessment["safety_score"],
-            "aqi": snap.aqi,
-            "pm25": snap.pm25,
-        })
+        segments.append(
+            {
+                "point": label,
+                "safety_score": assessment["safety_score"],
+                "aqi": snap.aqi,
+                "pm25": snap.pm25,
+            }
+        )
+
+    # Events intersecting the corridor (within 5km of any sample point)
+    news_notes: List[Dict[str, str]] = []
+    for event in news_events or []:
+        elat, elon = event.get("latitude"), event.get("longitude")
+        if elat is None or elon is None:
+            continue
+        if any(
+            haversine_km(elat, elon, slat, slon) <= 5.0 for _, slat, slon in samples
+        ):
+            news_notes.append(
+                {
+                    "type": event.get("category", "event"),
+                    "text": f"{event.get('title', 'Event')} intersects your route",
+                }
+            )
 
     route_score = int(round(min(scores)))  # worst segment dominates
     worst_idx = scores.index(min(scores))
+    safest_idx = scores.index(max(scores))
     return {
         "route_risk_score": route_score,
         "worst_segment": segments[worst_idx]["point"],
+        "safest_segment": segments[safest_idx]["point"],
         "segments": segments,
+        "news_notes": news_notes,
     }
 
 
-def _build_summary(assessment: Dict[str, Any], context: PatientContext, data_status: str = "available") -> str:
+def _build_summary(
+    assessment: Dict[str, Any], context: PatientContext, data_status: str = "available"
+) -> str:
     """One-line plain-language summary of the assessment."""
     if data_status == "unavailable":
         return (
@@ -689,7 +801,10 @@ def _build_summary(assessment: Dict[str, Any], context: PatientContext, data_sta
     return summaries.get(level, f"Risk level: {level} for {label}.")
 
 
-@app.get("/api/v1/patients/{user_id}/safety-assessment", response_model=SafetyAssessmentResponse)
+@app.get(
+    "/api/v1/patients/{user_id}/safety-assessment",
+    response_model=SafetyAssessmentResponse,
+)
 async def get_patient_safety_assessment(
     user_id: str = Path(..., description="Patient identifier"),
     lat: float = Query(..., ge=-90, le=90, description="Current latitude"),
@@ -700,7 +815,7 @@ async def get_patient_safety_assessment(
     dest_lon: Optional[float] = Query(
         None, ge=-180, le=180, description="Destination longitude (optional)"
     ),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Personalized safety assessment: is it safe for THIS patient right now?
 
@@ -766,23 +881,46 @@ async def get_patient_safety_assessment(
                     "severity": item["article"].severity,
                     "respiratory_relevance": item["article"].respiratory_relevance,
                     "distance_km": item["distance_km"],
+                    "latitude": item["article"].latitude,
+                    "longitude": item["article"].longitude,
                 }
                 for item in nearby
+            ]
+
+            # Personal symptom history (last 30 days) for trigger learning
+            symptom_cutoff = datetime.utcnow() - timedelta(days=30)
+            symptom_rows = (
+                db.execute(
+                    select(SymptomLog)
+                    .where(
+                        SymptomLog.patient_id == profile.id,
+                        SymptomLog.logged_at >= symptom_cutoff,
+                    )
+                    .order_by(SymptomLog.logged_at.desc())
+                    .limit(50)
+                )
+                .scalars()
+                .all()
+            )
+            symptoms = [
+                {
+                    "severity": s.severity,
+                    "weather_snapshot": s.weather_snapshot or {},
+                    "logged_at": s.logged_at,
+                }
+                for s in symptom_rows
             ]
 
             route_risk = None
             if dest_lat is not None and dest_lon is not None:
                 route_risk = _compute_route_risk(
-                    db, context, lat, lon, dest_lat, dest_lon
+                    db, context, lat, lon, dest_lat, dest_lon, news_events
                 )
-            return context, snapshot, news_events, route_risk
+            return context, snapshot, news_events, symptoms, route_risk
 
-        context, snapshot, news_events, route_risk = await asyncio.to_thread(
+        context, snapshot, news_events, symptoms, route_risk = await asyncio.to_thread(
             _db_work
         )
-
-        # Phase 3 will wire personal symptom history here
-        symptoms: List[Dict[str, Any]] = []
 
         scorer = RiskScorer(context)
         assessment = scorer.assess(snapshot, news_events, symptoms)
@@ -825,8 +963,11 @@ async def get_patient_safety_assessment(
 
         # Serialize once via model_dump (cache.set JSON-encodes with
         # default=str, handling datetimes) — avoids double serialization.
-        serialized = response.model_dump() if hasattr(response, "model_dump") \
+        serialized = (
+            response.model_dump()
+            if hasattr(response, "model_dump")
             else json.loads(response.json())
+        )
         await cache.set(cache_key, serialized, ttl=300)
         SAFETY_ASSESSMENTS.inc()
         SAFETY_AVG_SCORE.set(response.safety_score)
@@ -848,7 +989,7 @@ async def get_news_nearby(
     min_relevance: int = Query(
         0, ge=0, le=100, description="Minimum respiratory relevance (0-100)"
     ),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Curated air-quality news/alert events near a location.
 
@@ -868,8 +1009,13 @@ async def get_news_nearby(
 
         items = await asyncio.to_thread(
             get_active_articles_nearby,
-            db, lat, lon, radius_km,
-            hours=hours, limit=limit, min_relevance=min_relevance,
+            db,
+            lat,
+            lon,
+            radius_km,
+            hours=hours,
+            limit=limit,
+            min_relevance=min_relevance,
         )
         response = [
             NewsResponse(
@@ -888,14 +1034,160 @@ async def get_news_nearby(
             for item in items
         ]
         serialized = [
-            r.model_dump() if hasattr(r, "model_dump") else r.dict()
-            for r in response
+            r.model_dump() if hasattr(r, "model_dump") else r.dict() for r in response
         ]
         await cache.set(cache_key, serialized, ttl=600)
         return response
 
     except Exception as e:
         logger.error(f"Error fetching news nearby: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# Patient endpoints — Phase 3 (symptom logging + personal insights)
+@app.post(
+    "/api/v1/patients/{user_id}/symptoms",
+    response_model=SymptomLogResponse,
+    status_code=201,
+)
+async def log_patient_symptom(
+    user_id: str = Path(..., description="Patient identifier"),
+    body: SymptomLogRequest = Body(...),
+    db: Session = Depends(get_db),
+):
+    """Log a symptom event; auto-captures the environmental snapshot.
+
+    The snapshot powers the safety engine's personal trigger learning,
+    so logging makes future assessments personalized to this patient.
+    """
+    try:
+        if body.symptom_type not in _SYMPTOM_TYPES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"invalid symptom_type; allowed: {sorted(_SYMPTOM_TYPES)}",
+            )
+
+        def _work():
+            profile = db.execute(
+                select(PatientProfile).where(PatientProfile.user_id == user_id)
+            ).scalar_one_or_none()
+            if profile is None:
+                profile = PatientProfile(
+                    user_id=user_id,
+                    home_lat=body.lat,
+                    home_lon=body.lon,
+                    home_location=f"SRID=4326;POINT({body.lon} {body.lat})",
+                )
+                db.add(profile)
+                db.commit()
+                db.refresh(profile)
+            context = PatientContext.from_profile(profile)
+            snapshot = _build_environmental_snapshot(
+                db, body.lat, body.lon, context.alert_radius_km
+            )
+            log = SymptomLog(
+                patient_id=profile.id,
+                symptom_type=body.symptom_type,
+                severity=body.severity,
+                lat=body.lat,
+                lon=body.lon,
+                location=f"SRID=4326;POINT({body.lon} {body.lat})",
+                weather_snapshot={
+                    "aqi": snapshot.aqi,
+                    "pm25": snapshot.pm25,
+                    "pm10": snapshot.pm10,
+                    "o3": snapshot.o3,
+                    "no2": snapshot.no2,
+                    "temperature": snapshot.temperature,
+                    "humidity": snapshot.humidity,
+                    "wind_speed": snapshot.wind_speed,
+                },
+            )
+            db.add(log)
+            db.commit()
+            db.refresh(log)
+            return log
+
+        log = await asyncio.to_thread(_work)
+
+        # New history changes the assessment — invalidate this patient's caches
+        cache = await get_cache()
+        await cache.delete_pattern(f"safety_assessment:{user_id}:*")
+        await cache.delete_pattern(f"insights:{user_id}:*")
+
+        return SymptomLogResponse(
+            id=log.id,
+            symptom_type=log.symptom_type,
+            severity=log.severity,
+            weather_snapshot=log.weather_snapshot or {},
+            logged_at=log.logged_at,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error logging symptom: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/v1/patients/{user_id}/insights", response_model=InsightsResponse)
+async def get_patient_insights(
+    user_id: str = Path(..., description="Patient identifier"),
+    days: int = Query(30, ge=7, le=90, description="Lookback window in days"),
+    db: Session = Depends(get_db),
+):
+    """Personal insights: trigger correlation, safest/riskiest times, trend.
+
+    Pure statistics over the patient's symptom history — deterministic
+    and cached 15 minutes per user.
+    """
+    try:
+        cache = await get_cache()
+        cache_key = f"insights:{user_id}:{days}"
+        cached_result = await cache.get(cache_key)
+        if cached_result is not None:
+            return InsightsResponse(**cached_result)
+
+        def _work():
+            profile = db.execute(
+                select(PatientProfile).where(PatientProfile.user_id == user_id)
+            ).scalar_one_or_none()
+            if profile is None:
+                return compute_insights([], period_days=days)
+            cutoff = datetime.utcnow() - timedelta(days=days)
+            rows = (
+                db.execute(
+                    select(SymptomLog)
+                    .where(
+                        SymptomLog.patient_id == profile.id,
+                        SymptomLog.logged_at >= cutoff,
+                    )
+                    .order_by(SymptomLog.logged_at.desc())
+                )
+                .scalars()
+                .all()
+            )
+            symptoms = [
+                {
+                    "severity": s.severity,
+                    "weather_snapshot": s.weather_snapshot or {},
+                    "logged_at": s.logged_at,
+                }
+                for s in rows
+            ]
+            return compute_insights(symptoms, period_days=days)
+
+        data = await asyncio.to_thread(_work)
+        response = InsightsResponse(**data)
+        serialized = (
+            response.model_dump()
+            if hasattr(response, "model_dump")
+            else response.dict()
+        )
+        await cache.set(cache_key, serialized, ttl=900)
+        return response
+
+    except Exception as e:
+        logger.error(f"Error computing insights: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -906,7 +1198,7 @@ async def get_metrics():
     # This would integrate with prometheus_client
     # For now, return basic metrics
     cache_status = await cache_health_status()
-    
+
     metrics_text = f"""
 # HELP geoairquality_cache_hits_total Total cache hits
 # TYPE geoairquality_cache_hits_total counter
@@ -952,19 +1244,11 @@ geoairquality_news_articles_active {NEWS_ARTICLES_ACTIVE._value.get()}
 # TYPE geoairquality_news_last_fetch_timestamp gauge
 geoairquality_news_last_fetch_timestamp {NEWS_LAST_FETCH._value.get()}
 """
-    
-    return JSONResponse(
-        content=metrics_text,
-        media_type="text/plain"
-    )
+
+    return JSONResponse(content=metrics_text, media_type="text/plain")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")

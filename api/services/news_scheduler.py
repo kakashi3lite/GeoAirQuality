@@ -38,6 +38,11 @@ NEWS_FETCH_ERRORS = Counter(
 NEWS_ARTICLES_ACTIVE = Gauge(
     "geoairquality_news_articles_active", "Active news articles currently stored"
 )
+NEWS_ARTICLES_PER_SOURCE = Gauge(
+    "geoairquality_news_articles_per_source",
+    "Active news articles per source",
+    ["source"],
+)
 NEWS_LAST_FETCH = Gauge(
     "geoairquality_news_last_fetch_timestamp",
     "Unix timestamp of the last successful news fetch",
@@ -125,6 +130,9 @@ class NewsScheduler:
 
                 await asyncio.to_thread(_persist)
 
+            # Keep stored-article metrics fresh (counts + per source)
+            await asyncio.to_thread(self._refresh_metrics)
+
             # New/updated articles can change safety scores — invalidate
             # the per-user assessment caches and the news feed cache so the
             # next request reflects the freshest events.
@@ -140,3 +148,29 @@ class NewsScheduler:
         finally:
             # Release the lock for the next cycle
             await cache.delete(_LOCK_KEY)
+
+    def _refresh_metrics(self) -> None:
+        """Query the DB for active-article counts and update gauges."""
+        if self._session_local is None:
+            return
+        from sqlalchemy import func, select
+
+        from models import NewsArticle
+
+        db = self._session_local()
+        try:
+            total = db.execute(
+                select(func.count())
+                .select_from(NewsArticle)
+                .where(NewsArticle.is_active.is_(True))
+            ).scalar()
+            NEWS_ARTICLES_ACTIVE.set(total or 0)
+            rows = db.execute(
+                select(NewsArticle.source_name, func.count())
+                .where(NewsArticle.is_active.is_(True))
+                .group_by(NewsArticle.source_name)
+            ).all()
+            for source, count in rows:
+                NEWS_ARTICLES_PER_SOURCE.labels(source=source).set(count)
+        finally:
+            db.close()

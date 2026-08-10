@@ -28,6 +28,7 @@ from models import (
     PatientProfile,
     WeatherReading,
     AirQualityReading,
+    SymptomLog,
 )
 from services import news_processor as proc
 from services.news_fetcher import (
@@ -100,11 +101,19 @@ class GenericResult:
 class FakeSession:
     """Handles selects for the entities the news layer + safety engine touch."""
 
-    def __init__(self, profile=None, weather_rows=None, aq_rows=None, news_rows=None):
+    def __init__(
+        self,
+        profile=None,
+        weather_rows=None,
+        aq_rows=None,
+        news_rows=None,
+        symptom_rows=None,
+    ):
         self.profile = profile
         self.weather_rows = weather_rows or []
         self.aq_rows = aq_rows or []
         self.news_rows = news_rows or []
+        self.symptom_rows = symptom_rows or []
         self.added = []
         self.commits = 0
 
@@ -121,6 +130,8 @@ class FakeSession:
             return FakeScalarsResult(self.aq_rows)
         if entity is NewsArticle:
             return FakeScalarsResult(self.news_rows)
+        if entity is SymptomLog:
+            return FakeScalarsResult(self.symptom_rows)
         return GenericResult()
 
     def add(self, obj):

@@ -1,6 +1,6 @@
 # Phase 3 — Insights, Routes & Polish
 
-**Status:** 📋 Planned (next after news intelligence)
+**Status:** ✅ Implemented (2026-08-10) — see `api/main.py`, `api/services/insights.py`
 **Goal:** complete the patient experience — symptom logging, personal
 trigger learning, route-aware safety, and an insights API. The safety
 score stops being generic and becomes *personalized to this patient's

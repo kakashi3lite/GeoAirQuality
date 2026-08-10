@@ -21,7 +21,7 @@ docs/
 | [**Product Roadmap**](architecture/PRODUCT_ROADMAP.md) | Phase-by-phase product vision, KPIs, competitive strategy |
 | [**Design specs**](design/) | Planned modules: [Auth](design/auth.md) · [ML Pipeline](design/ml-pipeline.md) · [Frontend](design/frontend.md) · **[UI/UX reference](design/uiux.md)** — **📋 not yet implemented** |
 | [**Guides**](guides/) | [Database](guides/database.md) · [Deployment](guides/deployment.md) · [Performance](guides/performance.md) · [Pipeline](guides/pipeline.md) · [CI/CD](guides/ci-cd.md) · [Security](guides/security.md) |
-| [**Implementation plans**](implementation/) | [Phase 1](implementation/implementation-phase1.md) · **[Phase 3 — Insights & Routes](implementation/implementation-phase3.md)** 📋 planned |
+| [**Implementation plans**](implementation/) | [Phase 1](implementation/implementation-phase1.md) · **[Phase 3 — Insights & Routes](implementation/implementation-phase3.md)** ✅ implemented |
 
 ## 🔗 Quick links
 

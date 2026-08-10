@@ -25,7 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main
-from models import PatientProfile, WeatherReading, NewsArticle
+from models import PatientProfile, WeatherReading, NewsArticle, SymptomLog
 
 
 # ----------------------------------------------------------------------
@@ -81,11 +81,19 @@ class FakeScalars:
 class FakeSession:
     """Stub DB session returning controlled rows per entity type."""
 
-    def __init__(self, profile=None, weather_rows=None, aq_rows=None, news_rows=None):
+    def __init__(
+        self,
+        profile=None,
+        weather_rows=None,
+        aq_rows=None,
+        news_rows=None,
+        symptom_rows=None,
+    ):
         self.profile = profile
         self.weather_rows = weather_rows or []
         self.aq_rows = aq_rows or []
         self.news_rows = news_rows or []
+        self.symptom_rows = symptom_rows or []
         self.added = []
         self.committed = 0
         self.refreshed = 0
@@ -103,6 +111,8 @@ class FakeSession:
             return FakeScalarsResult(self.weather_rows)
         if entity is NewsArticle:
             return FakeScalarsResult(self.news_rows)
+        if entity is SymptomLog:
+            return FakeScalarsResult(self.symptom_rows)
         # AirQualityReading and anything else -> empty
         return FakeScalarsResult(self.aq_rows)
 

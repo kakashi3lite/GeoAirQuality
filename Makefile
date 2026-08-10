@@ -29,12 +29,12 @@ lint-fix:
 	black api/services/ tests/
 
 ## Unit tests (no external services needed). BLOCKING in CI.
-## Runs the supported suite (safety engine + API + news intelligence).
+## Runs the supported suite (safety engine + API + news + insights).
 test:
 	find . -name '._*' -not -path './.git/*' -delete 2>/dev/null || true
 	cd api && $(PYTHON) -m pytest \
 		../tests/test_safety_engine.py ../tests/test_safety_api.py \
-		../tests/test_news.py \
+		../tests/test_news.py ../tests/test_insights.py ../tests/test_symptoms.py \
 		--cov=services --cov=main --cov-report=xml --cov-report=term \
 		--junitxml=../$(REPORT) -q
 

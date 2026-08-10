@@ -325,6 +325,73 @@ def test_recommendation_partial_data_note():
     assert "partial" in texts
 
 
+# ----------------------------------------------------------------------
+# Personal history component (Phase 3)
+# ----------------------------------------------------------------------
+def test_history_no_symptoms_neutral():
+    context = make_context()
+    scorer = RiskScorer(context)
+    score, factors = scorer.score_history_component(clean_snapshot(), [])
+    assert score == 100.0
+    assert factors == []
+
+
+def test_history_similar_conditions_penalty():
+    context = make_context()
+    scorer = RiskScorer(context)
+    snapshot = clean_snapshot(aqi=120, pm25=45, humidity=80)
+    symptoms = [
+        {"severity": 3, "weather_snapshot": {"aqi": 125, "pm25": 40, "humidity": 75}},
+        {"severity": 4, "weather_snapshot": {"aqi": 130, "pm25": 50, "humidity": 82}},
+        {"severity": 3, "weather_snapshot": {"aqi": 118, "pm25": 42, "humidity": 78}},
+    ]
+    score, factors = scorer.score_history_component(snapshot, symptoms)
+    assert score < 100.0
+    assert len(factors) == 1
+    assert factors[0]["factor"] == "Personal history"
+
+
+def test_history_dissimilar_no_penalty():
+    context = make_context()
+    scorer = RiskScorer(context)
+    snapshot = clean_snapshot(aqi=30, pm25=8, humidity=40)
+    symptoms = [
+        {"severity": 4, "weather_snapshot": {"aqi": 180, "pm25": 90, "humidity": 90}}
+    ]
+    score, _ = scorer.score_history_component(snapshot, symptoms)
+    assert score == 100.0
+
+
+def test_history_reduces_overall_score():
+    context = make_context()
+    scorer = RiskScorer(context)
+    snapshot = clean_snapshot(aqi=120, pm25=40, humidity=80)
+    base = scorer.assess(snapshot, [], [])
+    with_history = scorer.assess(
+        snapshot,
+        [],
+        [
+            {
+                "severity": 4,
+                "weather_snapshot": {"aqi": 122, "pm25": 42, "humidity": 78},
+            },
+            {
+                "severity": 4,
+                "weather_snapshot": {"aqi": 128, "pm25": 45, "humidity": 80},
+            },
+            {
+                "severity": 4,
+                "weather_snapshot": {"aqi": 125, "pm25": 43, "humidity": 79},
+            },
+        ],
+    )
+    assert with_history["component_scores"]["history"] < 100
+    assert with_history["safety_score"] < base["safety_score"]
+    assert any(
+        f["factor"] == "Personal history" for f in with_history["contributing_factors"]
+    )
+
+
 if __name__ == "__main__":
     # Minimal runner: executes each test_* function, reports failures.
     import traceback

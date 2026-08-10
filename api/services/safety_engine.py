@@ -391,18 +391,73 @@ class RiskScorer:
             )
         return worst, factors
 
+    def _condition_similarity(
+        self,
+        current: "EnvironmentalSnapshot",
+        past: Dict[str, Any],
+    ) -> float:
+        """How similar past (symptom-time) conditions are to now, 0-1.
+
+        Weighted: AQI 50%, PM2.5 30%, humidity 20%. A value is 'missing'
+        if either side lacks it (contributes neutrally via full weight).
+        """
+        aqi_sim = 1.0
+        if current.aqi is not None and past.get("aqi") is not None:
+            aqi_sim = 1.0 - min(abs(current.aqi - float(past["aqi"])) / 100.0, 1.0)
+        pm25_sim = 1.0
+        if current.pm25 is not None and past.get("pm25") is not None:
+            pm25_sim = 1.0 - min(abs(current.pm25 - float(past["pm25"])) / 50.0, 1.0)
+        hum_sim = 1.0
+        if current.humidity is not None and past.get("humidity") is not None:
+            hum_sim = 1.0 - min(
+                abs(current.humidity - float(past["humidity"])) / 30.0, 1.0
+            )
+        return round(0.5 * aqi_sim + 0.3 * pm25_sim + 0.2 * hum_sim, 3)
+
     def score_history_component(
-        self, symptoms: List[Dict[str, Any]]
+        self,
+        snapshot: "EnvironmentalSnapshot",
+        symptoms: List[Dict[str, Any]],
     ) -> Tuple[float, List[Dict[str, Any]]]:
         """Score the personal-history component (weight 0.15).
 
-        Phase 1 returns neutral (no history engine yet). Phase 3 adds
-        symptom/trigger correlation.
+        Personal trigger learning: if the patient logged symptoms during
+        conditions similar to right now, apply a severity-weighted penalty.
+        Conservative by design — no history (or no similar episodes) means
+        a neutral 100.
         """
         if not symptoms:
             return 100.0, []
-        # Reserved for Phase 3 trigger-learning; conservative neutral now.
-        return 100.0, []
+
+        similar: List[Tuple[float, float]] = []
+        for symptom in symptoms:
+            past = symptom.get("weather_snapshot") or {}
+            sim = self._condition_similarity(snapshot, past)
+            if sim >= 0.7:
+                similar.append((sim, float(symptom.get("severity", 3))))
+
+        if not similar:
+            return 100.0, []
+
+        # Severity-weighted aggregate penalty, capped so history can never
+        # alone force 'very high' (clinical cap already handles pollution).
+        total = sum(sim * sev / 5.0 for sim, sev in similar)
+        penalty = min(60.0, total * 15.0)
+        score = max(40.0, 100.0 - penalty)
+
+        factors = [
+            {
+                "factor": "Personal history",
+                "value": len(similar),
+                "threshold": 0,
+                "unit": "similar episode(s)",
+                "detail": (
+                    f"You logged symptoms during conditions similar to now "
+                    f"{len(similar)} time(s) in the last 30 days"
+                ),
+            }
+        ]
+        return round(score, 1), factors
 
     # ------------------------------------------------------------------
     # Aggregation
@@ -420,7 +475,7 @@ class RiskScorer:
         aqi_s, aqi_factors = self.score_aqi_component(snapshot)
         weather_s, weather_factors = self.score_weather_component(snapshot)
         news_s, news_factors = self.score_news_component(news_events)
-        history_s, history_factors = self.score_history_component(symptoms)
+        history_s, history_factors = self.score_history_component(snapshot, symptoms)
 
         component_scores = {
             "aqi": round(aqi_s, 1),
